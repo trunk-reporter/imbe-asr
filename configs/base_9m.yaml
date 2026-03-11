@@ -1,0 +1,33 @@
+# Base Conformer-CTC configuration (9.2M parameters)
+# Proof-of-concept model trained on LibriSpeech train-clean-100
+
+model:
+  input_dim: 170
+  d_model: 256
+  n_heads: 4
+  d_ff: 1024
+  n_layers: 6
+  conv_kernel: 31
+  vocab_size: 40
+  dropout: 0.1
+  subsample: false
+
+training:
+  epochs: 50
+  batch_size: 32
+  accum_steps: 2
+  lr: 3e-4
+  warmup_steps: 1000
+  weight_decay: 0.01
+  grad_clip: 5.0
+
+data:
+  pairs_dir: data/pairs
+  librispeech_dir: data/LibriSpeech/train-clean-100
+  val_fraction: 0.1
+  min_frames: 10
+  max_frames: 2000
+
+# Results (LibriSpeech-IMBE validation, greedy decode):
+#   Epoch 36: WER=40.6%, CER=14.6%
+#   With beam search + 5-gram LM: ~28-30% WER

@@ -1,0 +1,9 @@
+data/
+checkpoints/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+wandb/
+*.pth
+*.npz
