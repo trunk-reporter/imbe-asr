@@ -1,7 +1,8 @@
 """Conformer-CTC model for IMBE-to-text speech recognition.
 
 Architecture: Linear input projection -> Conformer encoder -> CTC head.
-9.2M parameters at d_model=256, n_layers=6, d_ff=1024.
+Scalable from 9.2M (d=256, 6L) to 290M (d=1024, 12L) parameters.
+Current best: 48.6M at d_model=512, n_layers=8, n_heads=8, d_ff=2048.
 """
 
 import math
