@@ -7,3 +7,4 @@ __pycache__/
 wandb/
 *.pth
 *.npz
+vocoder/*.so

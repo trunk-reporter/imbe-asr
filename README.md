@@ -176,9 +176,10 @@ P25 TAP JSON (from trunk-recorder IMBE tap socket)
     -> fine-tune (src.train with --checkpoint)
 ```
 
-## Next Steps
+## TODO
 
-- **Scale model** to ~30-80M params (d_model=512, 8-12 layers) for broader vocabulary coverage
-- **Mixed training** on LibriSpeech + real P25 data for domain coverage without catastrophic forgetting
-- **Domain-specific LM** trained on P25 transcripts (unit numbers, 10-codes, street names, medical terminology, general conversation)
-- **Larger training set** -- more LibriSpeech splits, real P25 from more agencies/regions
+- [ ] **Expand training dataset** -- current 103.7h (train-clean-100) is small. Add train-clean-360, train-other-500, and other LibriSpeech splits. More data is the single biggest lever for WER improvement before scaling the model.
+- [ ] Scale model to ~30-80M params (d_model=512, 8-12 layers) for broader vocabulary coverage
+- [ ] Mixed training on LibriSpeech + real P25 data for domain coverage without catastrophic forgetting
+- [ ] Domain-specific LM trained on P25 transcripts (unit numbers, 10-codes, street names, medical terminology, general conversation)
+- [ ] Incorporate more real P25 TAP data from additional agencies/regions

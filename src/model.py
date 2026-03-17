@@ -62,19 +62,56 @@ class ConvModule(nn.Module):
 
 
 class MultiHeadSelfAttention(nn.Module):
-    """Standard multi-head self-attention with sinusoidal positional encoding."""
+    """Multi-head self-attention using F.scaled_dot_product_attention.
+
+    Uses manual Q/K/V projections with a fused linear layer and calls
+    F.scaled_dot_product_attention which auto-dispatches to FlashAttention-2
+    or memory-efficient attention on PyTorch 2.0+.
+    """
 
     def __init__(self, d_model, n_heads, dropout=0.1):
         super().__init__()
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+        self.dropout_p = dropout
+
         self.ln = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True,
-        )
+        self.qkv_proj = nn.Linear(d_model, 3 * d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, key_padding_mask=None):
         x = self.ln(x)
-        out, _ = self.attn(x, x, x, key_padding_mask=key_padding_mask)
+        B, T, D = x.shape
+
+        # Fused Q/K/V projection and reshape to (B, n_heads, T, head_dim)
+        qkv = self.qkv_proj(x)  # (B, T, 3*D)
+        qkv = qkv.view(B, T, 3, self.n_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, n_heads, T, head_dim)
+        q, k, v = qkv.unbind(0)  # each (B, n_heads, T, head_dim)
+
+        # Build attention mask from key_padding_mask
+        # key_padding_mask: (B, T) bool, True = pad position
+        attn_mask = None
+        if key_padding_mask is not None:
+            # Expand to (B, 1, 1, T) for broadcast over heads and query positions
+            # True (pad) -> -inf, False (valid) -> 0.0
+            attn_mask = torch.zeros(B, 1, 1, T, dtype=q.dtype, device=q.device)
+            attn_mask.masked_fill_(
+                key_padding_mask.unsqueeze(1).unsqueeze(2), float("-inf")
+            )
+
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout_p if self.training else 0.0,
+            is_causal=False,
+        )  # (B, n_heads, T, head_dim)
+
+        # Merge heads and project
+        out = out.transpose(1, 2).contiguous().view(B, T, D)  # (B, T, D)
+        out = self.out_proj(out)
         return self.dropout(out)
 
 

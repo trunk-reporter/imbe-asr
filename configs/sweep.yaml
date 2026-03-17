@@ -1,0 +1,21 @@
+program: scripts/sweep_agent.py
+method: bayes
+metric:
+  name: wer
+  goal: minimize
+# No early termination -- 15% data subset runs need all 5 epochs to converge
+parameters:
+  d_model:
+    values: [512, 768, 1024]
+  n_layers:
+    values: [8, 12, 16]
+  ff_mult:
+    values: [3, 4]
+  lr:
+    distribution: log_uniform_values
+    min: 1.5e-4
+    max: 5.0e-4
+  dropout:
+    value: 0.2
+  warmup_steps:
+    value: 500

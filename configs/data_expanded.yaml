@@ -1,0 +1,30 @@
+# Multi-source data configuration for expanded IMBE-ASR training
+# ~1400+ hours: LibriSpeech (960h) + TEDLIUM 3 (452h) + GigaSpeech S (250h)
+
+sources:
+  # LibriSpeech train-clean-100 (existing)
+  - pairs_dir: data/pairs
+    transcript_source: librispeech
+    librispeech_dir: data/LibriSpeech/train-clean-100
+
+  # LibriSpeech train-clean-360
+  - pairs_dir: data/pairs_ls360
+    transcript_source: librispeech
+    librispeech_dir: data/LibriSpeech/train-clean-360
+
+  # LibriSpeech train-other-500
+  - pairs_dir: data/pairs_ls500
+    transcript_source: librispeech
+    librispeech_dir: data/LibriSpeech/train-other-500
+
+  # TEDLIUM 3 (~452 hours TED talks)
+  - pairs_dir: data/pairs_tedlium
+    transcript_source: embedded
+
+  # GigaSpeech S (250 hours podcasts/YouTube)
+  - pairs_dir: data/pairs_gigaspeech
+    transcript_source: embedded
+
+val_fraction: 0.05
+min_frames: 10
+max_frames: 2000

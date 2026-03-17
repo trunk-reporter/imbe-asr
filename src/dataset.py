@@ -23,6 +23,12 @@ from .tokenizer import encode
 
 RAW_PARAM_DIM = 170
 
+# IMBE encoder introduces a 2-frame analysis delay: encoded frame N describes
+# audio at frame N-2. Training data encoded with imbe_encode (LibriSpeech,
+# TEDLIUM, GigaSpeech) needs the first 2 frames trimmed so features align
+# with transcripts. Real P25 TAP data (captured from radios) is NOT affected.
+ENCODER_DELAY_FRAMES = 2
+
 
 class IMBEDataset(Dataset):
     """Loads (raw_params, transcript) pairs from LibriSpeech NPZ files.
@@ -116,6 +122,10 @@ class IMBEDataset(Dataset):
         npz_path, tokens = self.samples[idx]
         d = np.load(npz_path)
         feats = d["raw_params"].astype(np.float32)
+
+        # Compensate for IMBE encoder delay in software-encoded data
+        if feats.shape[0] > ENCODER_DELAY_FRAMES:
+            feats = feats[ENCODER_DELAY_FRAMES:]
 
         if self.normalize:
             feats = (feats - self.mean) / self.std

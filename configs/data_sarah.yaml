@@ -1,0 +1,35 @@
+# Data config for sarah (10.2.2.148) -- 2x 3090 Ti
+# Paths are absolute to /mnt/disk/imbe_asr/
+#
+# Available datasets:
+#   train-clean-100: 28k pairs (from p25_train, has raw_params)
+#   TEDLIUM 3: 56k pairs (has raw_params)
+#   GigaSpeech S: 230k pairs (has raw_params)
+#   train-clean-360: 104k pairs (needs precompute)
+#   train-other-500: 82k pairs (partial, needs precompute)
+
+sources:
+  # LibriSpeech train-clean-100 (existing from p25_train)
+  - pairs_dir: /mnt/disk/imbe_asr/data/pairs
+    transcript_source: librispeech
+    librispeech_dir: /mnt/disk/imbe_asr/data/LibriSpeech/train-clean-100
+
+  # LibriSpeech train-clean-360
+  - pairs_dir: /mnt/disk/imbe_asr/data/pairs_ls360
+    transcript_source: embedded
+
+  # LibriSpeech train-other-500 (partial)
+  - pairs_dir: /mnt/disk/imbe_asr/data/pairs_ls500
+    transcript_source: embedded
+
+  # TEDLIUM 3 (~452 hours TED talks)
+  - pairs_dir: /mnt/disk/imbe_asr/data/pairs_tedlium
+    transcript_source: embedded
+
+  # GigaSpeech S (250 hours podcasts/YouTube)
+  - pairs_dir: /mnt/disk/imbe_asr/data/pairs_gigaspeech
+    transcript_source: embedded
+
+val_fraction: 0.05
+min_frames: 10
+max_frames: 1500

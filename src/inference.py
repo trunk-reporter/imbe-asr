@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import struct
 import sys
 import time
 
@@ -33,6 +34,89 @@ import torch
 
 from .model import ConformerCTC
 from .tokenizer import VOCAB_SIZE, decode_greedy
+
+# Binary TAP file format (trunk-recorder imbe_tap file mode):
+#   Header: uint32 magic (0x494D4245), uint32 version (1)
+#   Frames: uint32 seq, uint32 tgid, uint32 src_id, uint32 flags, uint16 u[8]
+TAP_MAGIC = 0x494D4245
+TAP_HEADER_FMT = "<II"
+TAP_HEADER_SIZE = struct.calcsize(TAP_HEADER_FMT)
+TAP_FRAME_FMT = "<IIII8H"
+TAP_FRAME_SIZE = struct.calcsize(TAP_FRAME_FMT)
+
+
+def _read_tap_file(path, strip_silence=True):
+    """Read a binary TAP file and return (frame_vectors, tgid).
+
+    Args:
+        path: Path to .tap file
+        strip_silence: If True, decode through libimbe and remove
+            zero-energy frames (P25 signaling/preamble/silence).
+
+    Returns:
+        fv: (N, 8) int16 array of IMBE codewords
+        tgid: talkgroup ID from first frame
+    """
+    with open(path, "rb") as f:
+        data = f.read()
+
+    # Try binary format first
+    if len(data) >= TAP_HEADER_SIZE:
+        magic, version = struct.unpack(TAP_HEADER_FMT, data[:TAP_HEADER_SIZE])
+        if magic == TAP_MAGIC:
+            n_frames = (len(data) - TAP_HEADER_SIZE) // TAP_FRAME_SIZE
+            frames = []
+            tgid = 0
+            for i in range(n_frames):
+                off = TAP_HEADER_SIZE + i * TAP_FRAME_SIZE
+                fields = struct.unpack(TAP_FRAME_FMT,
+                                       data[off:off + TAP_FRAME_SIZE])
+                seq, ftgid, src_id, flags = fields[:4]
+                u = list(fields[4:])
+                if i == 0:
+                    tgid = ftgid
+                frames.append(u)
+            fv = np.array(frames, dtype=np.int16)
+            if strip_silence:
+                fv = _strip_silence_frames(fv)
+            return fv, tgid
+
+    # Fallback: JSON format (old TAP files)
+    import json
+    with open(path) as f:
+        meta = json.load(f)
+    frames = meta.get("frames", [])
+    fv = np.array([[fr["u"][j] for j in range(8)] for fr in frames],
+                   dtype=np.int16)
+    if strip_silence:
+        fv = _strip_silence_frames(fv)
+    return fv, meta.get("tgid", 0)
+
+
+def _strip_silence_frames(fv):
+    """Remove P25 signaling/silence frames from IMBE codeword array.
+
+    P25 interleaves voice IMBE frames with signaling (LICH, HDU, LDU headers)
+    that decode to zero spectral energy. These break temporal continuity and
+    confuse the ASR model. We detect them by decoding through libimbe and
+    checking for zero energy in the spectral amplitude bands.
+
+    Args:
+        fv: (N, 8) int16 array of IMBE codewords
+
+    Returns:
+        Filtered (M, 8) int16 array with silence frames removed.
+    """
+    if len(fv) == 0:
+        return fv
+
+    from .precompute import decode_frame_vectors
+
+    raw_params = decode_frame_vectors(fv)
+    # Spectral amplitudes are in raw_params[:, 2:58]
+    energy = np.sum(np.abs(raw_params[:, 2:58]), axis=1)
+    voice_mask = energy > 0
+    return fv[voice_mask]
 
 
 def load_model(checkpoint_path, device=None):
@@ -138,6 +222,10 @@ def main():
                         help="Stats NPZ (default: same dir as checkpoint)")
     parser.add_argument("--npz", default=None, help="NPZ file to transcribe")
     parser.add_argument("--tap-file", default=None, help="TAP file to transcribe")
+    parser.add_argument("--watch", default=None,
+                        help="Watch directory for new .tap files and transcribe")
+    parser.add_argument("--min-frames", type=int, default=10,
+                        help="Min frames to attempt transcription (default: 10)")
     parser.add_argument("--stream", action="store_true",
                         help="Enable streaming demo mode")
     parser.add_argument("--chunk-ms", type=int, default=500)
@@ -200,7 +288,8 @@ def main():
 
         for npz_path, utt_id, ref in samples:
             d = np.load(npz_path)
-            feats = (d["raw_params"].astype(np.float32) - mean) / std
+            feats = d["raw_params"].astype(np.float32)[2:]  # encoder delay
+            feats = (feats - mean) / std
             dur = feats.shape[0] * 0.020
 
             print("=" * 70)
@@ -223,7 +312,8 @@ def main():
             print("ERROR: NPZ has no raw_params key")
             sys.exit(1)
 
-        feats = (d["raw_params"].astype(np.float32) - mean) / std
+        feats = d["raw_params"].astype(np.float32)[2:]  # encoder delay
+        feats = (feats - mean) / std
         dur = feats.shape[0] * 0.020
         print("File: %s (%.1fs, %d frames)" %
               (args.npz, dur, feats.shape[0]))
@@ -251,34 +341,90 @@ def main():
     elif args.tap_file:
         # Decode TAP file through libimbe first
         from .precompute import decode_frame_vectors
-        import json
 
-        with open(args.tap_file) as f:
-            meta = json.load(f)
-
-        frames = meta.get("frames", [])
-        fv = np.array([[fr["u"][j] for j in range(8)] for fr in frames],
-                       dtype=np.int16)
-        raw_params = decode_frame_vectors(fv)
-        feats = (raw_params.astype(np.float32) - mean) / std
-
-        dur = feats.shape[0] * 0.020
-        print("TAP: %s (%.1fs, %d frames, tgid=%s)" %
-              (args.tap_file, dur, feats.shape[0],
-               meta.get("tgid", "?")))
-        print()
-
-        if args.stream:
-            stream_transcribe(model, feats, device,
-                              chunk_frames=chunk_frames,
-                              sleep_factor=args.speed)
+        fv, tgid = _read_tap_file(args.tap_file)
+        if fv.shape[0] < args.min_frames:
+            print("TAP: %s -- too short (%d frames), skipping" %
+                  (args.tap_file, fv.shape[0]))
         else:
-            hyp = transcribe(model, feats, device)
-            print("HYP: %s" % hyp)
+            raw_params = decode_frame_vectors(fv)
+            feats = (raw_params.astype(np.float32) - mean) / std
+
+            dur = feats.shape[0] * 0.020
+            print("TAP: %s (%.1fs, %d frames, tgid=%s)" %
+                  (args.tap_file, dur, feats.shape[0], tgid))
+            print()
+
+            if args.stream:
+                stream_transcribe(model, feats, device,
+                                  chunk_frames=chunk_frames,
+                                  sleep_factor=args.speed)
+            else:
+                hyp = transcribe(model, feats, device)
+                print("HYP: %s" % hyp)
+
+    elif args.watch:
+        from pathlib import Path
+        from .precompute import decode_frame_vectors
+        import os
+
+        watch_dir = Path(args.watch)
+        if not watch_dir.exists():
+            print("ERROR: watch directory not found: %s" % watch_dir)
+            sys.exit(1)
+
+        print("Watching %s for new .tap files..." % watch_dir)
+        print("Press Ctrl-C to stop.\n")
+
+        seen = set()
+        # Pre-populate with existing files so we only transcribe new ones
+        for p in watch_dir.rglob("*.tap"):
+            seen.add(str(p))
+        print("(skipping %d existing files)\n" % len(seen))
+
+        try:
+            while True:
+                new_files = []
+                for p in sorted(watch_dir.rglob("*.tap")):
+                    sp = str(p)
+                    if sp not in seen:
+                        seen.add(sp)
+                        new_files.append(p)
+
+                for tap_path in new_files:
+                    # Wait briefly for file to finish writing
+                    time.sleep(0.2)
+                    try:
+                        fv, tgid = _read_tap_file(str(tap_path))
+                    except Exception as e:
+                        print("[ERR] %s: %s" % (tap_path.name, e))
+                        continue
+
+                    if fv.shape[0] < args.min_frames:
+                        continue
+
+                    raw_params = decode_frame_vectors(fv)
+                    feats = (raw_params.astype(np.float32) - mean) / std
+
+                    dur = feats.shape[0] * 0.020
+                    t0 = time.time()
+                    hyp = transcribe(model, feats, device)
+                    dt = (time.time() - t0) * 1000
+
+                    ts = tap_path.stem.split("-")[1].split("_")[0]
+                    print("[TG=%s] (%.1fs, %.0fms) %s" %
+                          (tgid, dur, dt, tap_path.name))
+                    print("  >> %s" % hyp)
+                    print()
+                    sys.stdout.flush()
+
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\nDone.")
 
     else:
         parser.print_help()
-        print("\nProvide --npz, --tap-file, or --all-val")
+        print("\nProvide --npz, --tap-file, --watch, or --all-val")
 
 
 if __name__ == "__main__":

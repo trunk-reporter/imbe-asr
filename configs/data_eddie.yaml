@@ -1,0 +1,21 @@
+# Data sources available on eddie
+# ~1220 hours: LibriSpeech 360+500, TEDLIUM 3, GigaSpeech S
+
+sources:
+  - pairs_dir: data/pairs_ls360
+    transcript_source: librispeech
+    librispeech_dir: data/LibriSpeech/train-clean-360
+
+  - pairs_dir: data/pairs_ls500
+    transcript_source: librispeech
+    librispeech_dir: data/LibriSpeech/train-other-500
+
+  - pairs_dir: data/pairs_tedlium
+    transcript_source: embedded
+
+  - pairs_dir: data/pairs_gigaspeech
+    transcript_source: embedded
+
+val_fraction: 0.05
+min_frames: 10
+max_frames: 2000
