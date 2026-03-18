@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IMBE-ASR Live P25 Scanner</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    background: #0a0a0f;
+    color: #e0e0e0;
+    min-height: 100vh;
+  }
+
+  header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-bottom: 1px solid #2a2a4a;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 { font-size: 18px; font-weight: 600; color: #00d4ff; letter-spacing: 1px; }
+  header h1 span { color: #666; font-weight: 400; }
+
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: #888;
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ff4444; transition: background 0.3s;
+  }
+  .status-dot.connected { background: #00ff88; box-shadow: 0 0 8px #00ff8844; }
+
+  .stats {
+    display: flex; gap: 24px; padding: 12px 24px;
+    background: #111118; border-bottom: 1px solid #1a1a2a;
+    font-size: 12px; color: #666;
+  }
+  .stat-value { color: #00d4ff; font-weight: 600; }
+
+  /* Active calls strip */
+  #active-calls {
+    padding: 8px 24px;
+    background: #0d0d14;
+    border-bottom: 1px solid #1a1a2a;
+    display: flex; gap: 12px; flex-wrap: wrap;
+    min-height: 40px; align-items: center;
+  }
+  .active-call {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 12px; border-radius: 16px;
+    background: #1a2a1a; border: 1px solid #2a4a2a;
+    font-size: 12px; animation: fadeIn 0.3s;
+  }
+  .active-call .tg-label { color: #00ff88; font-weight: 600; }
+  .active-call .partial-text {
+    color: #888; max-width: 400px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .active-call .audio-indicator {
+    width: 12px; height: 12px;
+    display: flex; align-items: center; gap: 1px;
+  }
+  .audio-bar {
+    width: 2px; background: #00ff88; border-radius: 1px;
+    animation: audioLevel 0.4s ease-in-out infinite alternate;
+  }
+  .audio-bar:nth-child(1) { height: 4px; animation-delay: 0s; }
+  .audio-bar:nth-child(2) { height: 8px; animation-delay: 0.1s; }
+  .audio-bar:nth-child(3) { height: 6px; animation-delay: 0.2s; }
+
+  @keyframes audioLevel {
+    from { transform: scaleY(0.3); }
+    to { transform: scaleY(1); }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* Completed calls feed */
+  #feed {
+    padding: 16px 24px;
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: calc(100vh - 180px);
+    overflow-y: auto;
+  }
+  .entry {
+    display: grid;
+    grid-template-columns: 80px 1fr auto;
+    gap: 12px; padding: 10px 14px;
+    border-radius: 6px; background: #111118;
+    border-left: 3px solid transparent;
+    animation: slideIn 0.3s ease-out;
+    align-items: baseline;
+  }
+  .entry.fresh { background: #0d1a1a; border-left-color: #00d4ff; }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .tg { font-size: 13px; font-weight: 600; color: #00d4ff; white-space: nowrap; }
+  .text { font-size: 14px; line-height: 1.5; color: #d0d0d0; word-break: break-word; }
+  .meta { font-size: 11px; color: #555; white-space: nowrap; text-align: right; }
+  .meta .dur { color: #888; }
+
+  .tg-fire { color: #ff6b6b; }
+  .tg-ems { color: #ffd93d; }
+  .tg-law { color: #6bcbff; }
+  .tg-util { color: #a8e6a3; }
+
+  .empty-state {
+    text-align: center; padding: 80px 24px; color: #333;
+  }
+  .empty-state h2 { font-size: 20px; margin-bottom: 8px; color: #444; }
+
+  .mute-btn {
+    background: #2a2a3a; border: 1px solid #3a3a5a; color: #aaa;
+    padding: 4px 12px; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 12px;
+  }
+  .mute-btn:hover { background: #3a3a4a; }
+  .mute-btn.muted { color: #ff6b6b; border-color: #5a2a2a; }
+
+  #feed::-webkit-scrollbar { width: 6px; }
+  #feed::-webkit-scrollbar-track { background: transparent; }
+  #feed::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>IMBE-ASR <span>// Live P25 Scanner</span></h1>
+  <div style="display:flex;gap:16px;align-items:center">
+    <button class="mute-btn" id="muteBtn" onclick="toggleMute()">Unmute Audio</button>
+    <div class="status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </div>
+</header>
+
+<div class="stats">
+  <div>Calls: <span class="stat-value" id="countStat">0</span></div>
+  <div>Active TGs: <span class="stat-value" id="tgStat">0</span></div>
+  <div>Uptime: <span class="stat-value" id="uptimeStat">0:00</span></div>
+</div>
+
+<div id="active-calls"></div>
+
+<div id="feed">
+  <div class="empty-state" id="emptyState">
+    <h2>Waiting for transmissions...</h2>
+    <p>Live transcriptions will appear as P25 radio calls are decoded.</p>
+  </div>
+</div>
+
+<script>
+const WS_PORT = 8081;
+const MAX_ENTRIES = 200;
+const SAMPLE_RATE = 8000;
+
+let ws;
+let count = 0;
+let activeTGs = new Set();
+let startTime = Date.now();
+let audioCtx = null;
+let muted = true;
+let activeCalls = {};  // tgid -> {element, partialText, audioQueue}
+
+function tgClass(tgid) {
+  if (tgid >= 9130 && tgid <= 9180) return 'tg-law';
+  if (tgid >= 9400 && tgid <= 9480) return 'tg-util';
+  if (tgid >= 21000 && tgid <= 21100) return 'tg-fire';
+  if (tgid >= 51000 && tgid <= 55000) return 'tg-ems';
+  return '';
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+function formatTime(ts) {
+  return new Date(ts * 1000).toLocaleTimeString('en-US', { hour12: false });
+}
+
+function toggleMute() {
+  muted = !muted;
+  const btn = document.getElementById('muteBtn');
+  if (muted) {
+    btn.textContent = 'Unmute Audio';
+    btn.classList.remove('muted');
+  } else {
+    btn.textContent = 'Mute Audio';
+    btn.classList.add('muted');
+    if (!audioCtx) audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+}
+
+/* ---- Audio playback ---- */
+function playAudioPacket(data) {
+  if (muted || !audioCtx) return;
+
+  // data is ArrayBuffer: 4-byte header + PCM int16 samples
+  const pcm = new Int16Array(data, 4);  // skip header
+  const float32 = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) {
+    float32[i] = pcm[i] / 32768.0;
+  }
+
+  const buf = audioCtx.createBuffer(1, float32.length, SAMPLE_RATE);
+  buf.getChannelData(0).set(float32);
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  src.start();
+}
+
+/* ---- Active call management ---- */
+function updateActiveCall(tgid, text) {
+  const container = document.getElementById('active-calls');
+
+  if (!activeCalls[tgid]) {
+    const el = document.createElement('div');
+    el.className = 'active-call';
+    el.innerHTML = `
+      <div class="audio-indicator">
+        <div class="audio-bar"></div>
+        <div class="audio-bar"></div>
+        <div class="audio-bar"></div>
+      </div>
+      <span class="tg-label ${tgClass(tgid)}">TG ${tgid}</span>
+      <span class="partial-text"></span>
+    `;
+    container.appendChild(el);
+    activeCalls[tgid] = { element: el };
+  }
+
+  const ptEl = activeCalls[tgid].element.querySelector('.partial-text');
+  if (text) ptEl.textContent = text;
+}
+
+function finishActiveCall(tgid) {
+  if (activeCalls[tgid]) {
+    activeCalls[tgid].element.remove();
+    delete activeCalls[tgid];
+  }
+}
+
+/* ---- Completed call feed ---- */
+function addFinalEntry(msg) {
+  const feed = document.getElementById('feed');
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.remove();
+
+  document.querySelectorAll('.entry.fresh').forEach(el =>
+    el.classList.remove('fresh'));
+
+  const div = document.createElement('div');
+  div.className = 'entry fresh';
+  div.innerHTML = `
+    <div class="tg ${tgClass(msg.tgid)}">TG ${msg.tgid}</div>
+    <div class="text">${escapeHtml(msg.text)}</div>
+    <div class="meta">
+      <div class="dur">${msg.duration}s</div>
+      <div>${formatTime(msg.timestamp)}</div>
+    </div>
+  `;
+  feed.insertBefore(div, feed.firstChild);
+  while (feed.children.length > MAX_ENTRIES) feed.removeChild(feed.lastChild);
+
+  count++;
+  activeTGs.add(msg.tgid);
+  document.getElementById('countStat').textContent = count;
+  document.getElementById('tgStat').textContent = activeTGs.size;
+}
+
+/* ---- WebSocket ---- */
+function connect() {
+  const host = window.location.hostname || 'localhost';
+  ws = new WebSocket(`ws://${host}:${WS_PORT}`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    document.getElementById('statusDot').classList.add('connected');
+    document.getElementById('statusText').textContent = 'Connected';
+  };
+
+  ws.onclose = () => {
+    document.getElementById('statusDot').classList.remove('connected');
+    document.getElementById('statusText').textContent = 'Reconnecting...';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (event) => {
+    if (event.data instanceof ArrayBuffer) {
+      // Binary: audio packet
+      const view = new Uint8Array(event.data);
+      if (view[0] === 0x41) {  // 'A'
+        const tgid = (view[1] << 8) | view[2];
+        updateActiveCall(tgid, null);
+        playAudioPacket(event.data);
+      }
+    } else {
+      // Text: JSON message
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'partial') {
+        updateActiveCall(msg.tgid, msg.text);
+      } else if (msg.type === 'final') {
+        finishActiveCall(msg.tgid);
+        addFinalEntry(msg);
+      }
+    }
+  };
+}
+
+function updateUptime() {
+  const s = Math.floor((Date.now() - startTime) / 1000);
+  document.getElementById('uptimeStat').textContent =
+    Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+}
+
+connect();
+setInterval(updateUptime, 1000);
+</script>
+</body>
+</html>
