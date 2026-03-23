@@ -70,7 +70,7 @@ Training WER is on the full multi-source val set (LibriSpeech + TEDLIUM + GigaSp
 
 W&B run: [sarah-1024d-12l-ddp](https://wandb.ai/luxprimatech/imbe-asr/runs/zrnez9mv)
 
-**Inference speed:**
+**Inference speed (GPU workstation):**
 
 | Call Duration | GPU (3090 Ti) | CPU |
 |---------------|--------------|-----|
@@ -79,7 +79,25 @@ W&B run: [sarah-1024d-12l-ddp](https://wandb.ai/luxprimatech/imbe-asr/runs/zrnez
 | 10s | 5.8ms | 49ms |
 | 30s | 6.9ms | 241ms |
 
-200x real-time on CPU. Fast enough for any deployment scenario.
+200x real-time on CPU, 1700x on GPU.
+
+### Edge Deployment (Raspberry Pi 5, 4GB)
+
+The 290M model runs on a $60 Raspberry Pi via ONNX Runtime + int8 quantization. PyTorch can't even load it (OOM at 3.3GB), but quantized to 298-312MB it fits comfortably.
+
+| Runtime | Model | Size | 10s call | RTF | RAM |
+|---------|-------|------|----------|-----|-----|
+| C (70KB binary) | 48.6M fp32 | 195 MB | 660ms | 0.07x | ~300 MB |
+| C (70KB binary) | 48.6M uint8 | 59 MB | 788ms | 0.08x | ~140 MB |
+| C (70KB binary) | 290M uint8 | 312 MB | 2.8s | 0.28x | ~1.3 GB |
+| Python ONNX RT | 48.6M fp32 | 195 MB | 649ms | 0.07x | 285 MB |
+| Python ONNX RT | 290M int8 | 298 MB | 3.5s | 0.35x | 535 MB |
+| PyTorch | 48.6M fp32 | 567 MB | 800ms | 0.08x | 995 MB |
+| PyTorch | 290M fp32 | 3.3 GB | OOM | -- | >4 GB |
+
+All models faster than real-time. The C engine is a 70KB binary -- no Python needed. int8 quantization preserves perfect accuracy on the 290M model.
+
+Full benchmark logs in [`results/`](results/).
 
 ## Architecture
 
