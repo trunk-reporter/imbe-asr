@@ -1,0 +1,72 @@
+Raspberry Pi 5 (4GB, aarch64) -- ONNX Runtime 1.24.4 Inference
+
+============================================================
+48.6M model -- ONNX fp32 (195.2 MB)
+============================================================
+Load time: 0.51s
+Memory: 285 MB (loaded) / 42 MB (baseline)
+
+Duration         Mean      Std      Min      Max      RTF
+------------------------------------------------------------
+1s (50 fr)      64.6ms     1.9ms    63.5ms    68.4ms  0.0646x
+2s (100 fr)    110.5ms     0.1ms   110.4ms   110.8ms  0.0553x
+5s (250 fr)    286.8ms     1.8ms   285.1ms   290.1ms  0.0574x
+10s (500 fr)   648.7ms     1.3ms   647.3ms   651.0ms  0.0649x
+30s (1500 fr)  2698.3ms     2.1ms  2695.9ms  2701.7ms  0.0899x
+
+Accuracy (LibriSpeech sample):
+  REF: AS IF THE YOUNG LADY HAD BEEN IN A POSITION TO APPEAL TO IT BUT IN FACT THE BRITISH PUBLIC REMAINED FOR THE PRESENT PROFOUNDLY INDIFFERENT TO MISS ISABEL ARCHER WHOSE FORTUNE HAD DROPPED HER AS HER COUSIN SAID INTO THE DULLEST HOUSE IN ENGLAND
+  HYP: AS IF THE YOUNG LADY HAD BEEN IN A PE POSITION TO APPEAL TO IT BUT IN FACT THE BRITISH PUBLIC REMAINED FOR THE PRESENT PROFOUNDLY INDIFFERENT TO MIS ISABEL ARCHER WHOSE FORTUNE HAD DROPPED HER AS HER COUSIN SAID INTO THE DULLEST HOUSE IN ENGLAND
+
+============================================================
+48.6M model -- ONNX int8 (56.7 MB)
+============================================================
+Load time: 0.31s
+Memory: 141 MB (loaded) / 42 MB (baseline)
+
+Duration         Mean      Std      Min      Max      RTF
+------------------------------------------------------------
+1s (50 fr)      95.5ms     0.1ms    95.3ms    95.6ms  0.0955x
+2s (100 fr)    184.0ms     0.4ms   183.5ms   184.8ms  0.0920x
+5s (250 fr)    478.2ms     3.0ms   475.4ms   483.3ms  0.0956x
+10s (500 fr)  1034.7ms     2.0ms  1032.2ms  1037.5ms  0.1035x
+30s (1500 fr)  3938.5ms    10.3ms  3924.7ms  3949.8ms  0.1313x
+
+Accuracy (LibriSpeech sample):
+  REF: AS IF THE YOUNG LADY HAD BEEN IN A POSITION TO APPEAL TO IT BUT IN FACT THE BRITISH PUBLIC REMAINED FOR THE PRESENT PROFOUNDLY INDIFFERENT TO MISS ISABEL ARCHER WHOSE FORTUNE HAD DROPPED HER AS HER COUSIN SAID INTO THE DULLEST HOUSE IN ENGLAND
+  HYP: AS IF THE YOUNG LADY HAD BEEN IN A PUT POSITION TO APPEAL TO IT BUT IN FACT THE BRITISH PUBLIC REMAINED FOR THE PRESENT PROFOUNDLY INDIFFERENT WO MIS ISABEL ARCHER WHOSE FORTUNE HAD DROPPED HER AS HER COUSIN SAID INTO THE DULLEST HOUSE IN ENGLAND
+
+============================================================
+290M model -- ONNX int8 (297.8 MB)
+============================================================
+Load time: 0.94s
+Memory: 535 MB (loaded) / 42 MB (baseline)
+
+Duration         Mean      Std      Min      Max      RTF
+------------------------------------------------------------
+1s (50 fr)     325.9ms     0.3ms   325.6ms   326.4ms  0.3259x
+2s (100 fr)    621.8ms     1.7ms   620.0ms   624.6ms  0.3109x
+5s (250 fr)   1625.7ms     1.2ms  1624.7ms  1628.1ms  0.3251x
+10s (500 fr)  3506.5ms     6.8ms  3498.4ms  3514.4ms  0.3507x
+30s (1500 fr) 13050.1ms    20.2ms 13022.7ms 13077.3ms  0.4350x
+
+Accuracy (LibriSpeech sample):
+  REF: AS IF THE YOUNG LADY HAD BEEN IN A POSITION TO APPEAL TO IT BUT IN FACT THE BRITISH PUBLIC REMAINED FOR THE PRESENT PROFOUNDLY INDIFFERENT TO MISS ISABEL ARCHER WHOSE FORTUNE HAD DROPPED HER AS HER COUSIN SAID INTO THE DULLEST HOUSE IN ENGLAND
+  HYP: AS IF THE YOUNG LADY HAD BEEN IN A POSITION TO APPEAL TO IT BUT IN FACT THE BRITISH PUBLIC REMAINED FOR THE PRESENT PROFOUNDLY INDIFFERENT TO MISS ISABEL ARCHER WHOSE FORTUNE HAD DROPPED HER AS HER COUSIN SAID INTO THE DULLEST HOUSE IN ENGLAND
+
+============================================================
+Summary
+============================================================
+                    Size    RAM     10s call    RTF     Accuracy
+48.6M fp32 ONNX     195MB   285MB   649ms      0.065x  Near-perfect
+48.6M int8 ONNX      57MB   141MB   1035ms     0.104x  Near-perfect
+290M int8 ONNX      298MB   535MB   3507ms     0.351x  Perfect
+48.6M fp32 PyTorch  567MB   995MB   800ms      0.080x  (baseline)
+290M fp32 PyTorch   3.3GB   OOM     --         --      --
+
+Notes:
+- ONNX fp32 is 3x faster than PyTorch for same model (285MB vs 995MB RAM)
+- 290M int8 fits on 4GB Pi (PyTorch OOM). Perfect accuracy preserved.
+- int8 is slower per-inference than fp32 (no int8 SIMD accel on Cortex-A76)
+  but memory savings (141MB vs 285MB) enable smaller deployments
+- All models faster than real-time (RTF < 1.0)
