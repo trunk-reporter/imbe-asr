@@ -17,7 +17,7 @@ PORT="${2:?Usage: vast_push.sh HOST PORT}"
 SSH="ssh -o StrictHostKeyChecking=no -p $PORT root@$HOST"
 SCP="scp -o StrictHostKeyChecking=no -P $PORT"
 
-SARAH="millerah@10.2.2.148"
+SARAH="${SARAH_HOST:-user@training-server}"
 SARAH_CHUNKS="/mnt/disk/imbe_asr/data/packed/chunks"
 SARAH_META="/mnt/disk/imbe_asr/data/packed/all.meta.pkl"
 

@@ -23,7 +23,7 @@ Usage:
 
     # Standalone mode (no plugin needed):
     python3 scripts/demo_server.py --checkpoint checkpoints/p25_finetuned/best.pth \
-        --watch ~/trunk-recorder-mqtt/tr_audio/butco/
+        --watch ~/trunk-recorder/audio/
 """
 
 import argparse
@@ -43,6 +43,43 @@ AUDIO_HEADER_SIZE = 4
 
 # Connected WebSocket clients
 clients = set()
+
+# Beam search decoder (loaded lazily)
+beam_decoder = None
+
+def get_beam_decoder():
+    global beam_decoder
+    if beam_decoder is not None:
+        return beam_decoder
+    try:
+        from pyctcdecode import build_ctcdecoder
+        lm_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'lm', '5gram.bin')
+        unigrams_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'lm', 'unigrams.txt')
+        if not os.path.exists(lm_path):
+            print("KenLM not found at %s, using greedy decode" % lm_path)
+            return None
+        VOCAB = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 '"
+        labels = [''] + list(VOCAB)
+        with open(unigrams_path) as f:
+            unigrams = [line.strip() for line in f if line.strip()]
+        beam_decoder = build_ctcdecoder(labels, kenlm_model_path=lm_path,
+                                         unigrams=unigrams, alpha=0.15, beta=1.0)
+        print("Beam search decoder loaded (KenLM + %d unigrams)" % len(unigrams))
+    except Exception as e:
+        print("Beam search not available: %s" % e)
+    return beam_decoder
+
+
+def beam_decode_logprobs(b64_logprobs, T):
+    """Decode base64-encoded log_probs with beam search + KenLM."""
+    import base64
+    import numpy as np
+    decoder = get_beam_decoder()
+    if decoder is None:
+        return None
+    raw = base64.b64decode(b64_logprobs)
+    lp = np.frombuffer(raw, dtype=np.float32).reshape(T, 39)
+    return decoder.decode(lp, beam_width=32)
 
 
 async def ws_handler(websocket):
@@ -85,7 +122,7 @@ async def read_plugin_tcp(host, port):
     """Read interleaved audio + JSON from the plugin's TCP socket."""
     while True:
         try:
-            reader, writer = await asyncio.open_connection(host, port)
+            reader, writer = await asyncio.open_connection(host, port, limit=1024*1024)
             print("Connected to plugin at %s:%d" % (host, port))
 
             while True:
@@ -111,7 +148,12 @@ async def read_plugin_tcp(host, port):
                             tgid = msg.get("tgid", "?")
                             text = msg.get("text", "")
 
-                            if kind == "final":
+                            if kind == "final" and "logprobs" in msg:
+                                # Strip logprobs before sending to browser
+                                if "logprobs" in msg: del msg["logprobs"]
+                                if "T" in msg: del msg["T"]
+                                print("[TG=%s] FINAL: %s" % (tgid, text[:80]))
+                            elif kind == "final":
                                 print("[TG=%s] FINAL: %s" % (tgid, text[:80]))
                             elif kind == "partial":
                                 pass  # quiet for partials

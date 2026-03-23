@@ -8,3 +8,33 @@ wandb/
 *.pth
 *.npz
 vocoder/*.so
+
+# Keep results/ tracked for reproducibility evidence
+!results/
+
+# Logs (except results/)
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependency directories
+node_modules/
+
+# Environment variables
+.env
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS specific
+.DS_Store
+
+# Task management
+.taskmaster/

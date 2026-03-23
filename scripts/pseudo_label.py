@@ -7,7 +7,7 @@ ElevenLabs + full reconciliation.
 
 Usage:
     python3 scripts/pseudo_label.py \
-        --tap-dir ~/trunk-recorder-mqtt/tr_audio/butco/ \
+        --tap-dir ~/trunk-recorder/audio/ \
         --output-dir data/p25_labeled \
         --workers 4
 """

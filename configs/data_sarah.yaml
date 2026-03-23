@@ -1,4 +1,4 @@
-# Data config for sarah (10.2.2.148) -- 2x 3090 Ti
+# Data config for training server -- 2x 3090 Ti
 # Paths are absolute to /mnt/disk/imbe_asr/
 #
 # Available datasets:

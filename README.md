@@ -1,82 +1,76 @@
-# IMBE-ASR: Speech Recognition Directly from P25 Vocoder Parameters
+# IMBE-ASR: Speech Recognition Directly from Vocoder Parameters
 
-A speech-to-text system that reads IMBE vocoder parameters from P25 radio transmissions and produces text transcriptions -- **without ever synthesizing audio**. Instead of the traditional pipeline (radio -> IMBE decode -> audio -> ASR), we skip the audio entirely and go straight from codec parameters to text.
+ASR straight from P25 IMBE codec parameters -- skip audio reconstruction entirely and go from the digital bitstream to text. 290M Conformer-CTC, **1.9% WER** with language model on LibriSpeech-IMBE.
 
-## Why
+## The Problem
 
-P25 (Project 25) is the digital radio standard used by public safety agencies across the US -- law enforcement, fire, EMS, public works, transit, schools, and more. Every P25 voice transmission is encoded with the IMBE (Improved Multi-Band Excitation) vocoder, which compresses speech into 8 codeword parameters per 20ms frame.
+P25 digital radio (law enforcement, fire, EMS) uses the IMBE vocoder -- a 4.4 kbps codec from the 90s. If you want to transcribe it, the standard approach is: decode IMBE -> reconstruct audio -> run Whisper or whatever.
 
-Existing transcription approaches decode these parameters back to audio first, then run a general-purpose ASR model (Whisper, etc.) on the reconstructed waveform. This is wasteful: the IMBE vocoder destroys phase information and limits bandwidth to ~3.4kHz, so the "audio" is a poor representation of what was actually said. The codec parameters themselves contain the same spectral information in a more direct form.
+But there is no public IMBE specification. The codec is proprietary (DVSI). `libimbe` -- the open-source implementation everyone uses -- is a reverse-engineered best guess at the original algorithm. The audio it produces is an approximation of an approximation. So the standard pipeline is:
 
-By training an ASR model that takes decoded IMBE parameters as input, we:
+**codec params -> proprietary-spec-approximated waveform reconstruction -> mel spectrogram extraction -> ASR**
 
-- **Skip lossy audio reconstruction** -- no vocoder synthesis artifacts
-- **Preserve full spectral resolution** -- per-harmonic amplitudes and voicing
-- **Run faster** -- 170 floats per frame vs 160 audio samples (at 8kHz)
-- **Enable pre-audio-decode transcription** -- tap the codec bitstream before vocoder synthesis (via the IMBE tap socket in trunk-recorder)
+Every step is lossy. The reconstruction itself is computationally expensive (trig, IFFT, overlap-add synthesis per frame), and at the end you've created a degraded audio signal so a speech model can re-extract spectral features -- features that were already there in the codec parameters.
 
-## How It Works
+We skip all of that.
 
-### Input Representation (170 dimensions per frame)
+## Why Skip Reconstruction
 
-Each 20ms IMBE frame carries 8 codeword parameters `u[0..7]`. We run these through the deterministic IMBE decode (the same math the vocoder uses) but stop before waveform synthesis:
+The vocoder parameters already encode speech: fundamental frequency, spectral amplitudes, voicing decisions. That IS the speech, in a compact parametric representation. The model doesn't need a waveform -- it needs phonetic information, which the codec parameters describe directly.
 
-```
-u[0..7] -> imbe_decode_params() -> f0, L, spectral_amplitudes, voicing_flags
-```
+The computational argument: IMBE waveform synthesis requires per-frame harmonic oscillator evaluation, spectral amplitude interpolation, voiced/unvoiced mixing, and overlap-add windowing. Then you still need a spectrogram. Our approach is a single matrix multiply (170-dim -> 1024-dim) per frame. Full inference on a 10-second call: **5.8ms on GPU** (200x real-time). The vocoder reconstruction alone would take longer.
 
-This produces a fixed-size 170-dimensional feature vector per frame:
+We also sidestep the fidelity question entirely. It doesn't matter how accurate libimbe's reconstruction is, because we never reconstruct. We go straight from the digital bitstream to text.
 
-| Dims | Content | Description |
-|------|---------|-------------|
-| `[0]` | f0 | Fundamental frequency (Hz) |
-| `[1]` | L | Number of harmonics (0-56) |
-| `[2:58]` | sa[0..55] | Spectral amplitudes (zero-padded) |
-| `[58:114]` | vuv[0..55] | Per-harmonic voiced/unvoiced flags (zero-padded) |
-| `[114:170]` | mask[0..55] | Binary harmonic validity mask (1=real, 0=pad) |
+## Input Representation
 
-The mask is critical -- without it, the model can't distinguish zero-energy harmonics from padding, which matters because IMBE preserves per-band spectral granularity.
-
-This is the **"middle path"** between:
-- Raw codewords (8-dim, too compressed for the model to learn the decode math)
-- BFCCs (20-dim, lossy DCT smoothing discards per-harmonic detail)
-
-### Model Architecture
-
-**Conformer-CTC** encoder with character-level CTC decoding:
+Each 20ms IMBE frame is expanded into a 170-dimensional vector:
 
 ```
-170-dim IMBE params -> Linear(170, 256) -> 6x Conformer blocks -> CTC head -> 40 characters
+[0]       f0 (fundamental frequency)
+[1]       L (harmonic count, 0-56)
+[2:58]    spectral amplitudes (56 slots, zero-padded)
+[58:114]  voiced/unvoiced flags per harmonic
+[114:170] binary validity mask (1=real harmonic, 0=padding)
 ```
 
-Each Conformer block: FFN(1/2) -> Multi-Head Self-Attention -> ConvModule(k=31) -> FFN(1/2) -> LayerNorm
-
-- 9.2M parameters (proof-of-concept size)
-- 40-class character vocabulary: blank + A-Z + 0-9 + space + apostrophe
-- Optional beam search with KenLM n-gram language model
-
-### Data Sources
-
-1. **LibriSpeech train-clean-100** (103.7 hours, 28,539 utterances) -- Clean audiobook speech IMBE-encoded via `generate_pairs.py` to produce paired (IMBE params, transcript) training data.
-
-2. **Real P25 TAP recordings** (~37,800 calls) -- Live radio traffic captured via the IMBE tap socket in trunk-recorder. Transcribed by a P25-tuned Qwen3-ASR server. Covers law enforcement, fire, EMS, public works, transit, and general conversational radio traffic.
+The mask is critical -- without it the model can't distinguish silence from zero-padded harmonics. We tried raw 8-dim codewords (too compressed) and 20-dim BFCCs (lost information). This 170-dim representation won decisively.
 
 ## Results
 
-### LibriSpeech-IMBE validation (greedy decode, no LM)
+**LibriSpeech-IMBE validation** (speaker-split, 2775 utterances):
 
-| Epoch | WER | CER |
-|-------|-----|-----|
-| 10 | 65.8% | 26.6% |
-| 20 | 48.7% | 18.1% |
-| 30 | 42.4% | 15.3% |
-| 36 | **40.6%** | **14.6%** |
+| Decoding | WER | CER |
+|----------|-----|-----|
+| Greedy | 6.5% | 1.9% |
+| + 5-gram KenLM | **1.9%** | **0.7%** |
 
-With beam search + 5-gram LM: ~28-30% WER.
+For context: this is from 4.4 kbps vocoder parameters, not audio. The IMBE codec was designed in 1993 to be barely intelligible to human ears.
 
-For comparison, the previous BFCC-based approach (20-dim input) plateaued at 56% greedy WER / 36% beam+LM WER. The 170-dim raw params are strictly better, confirming that preserving full spectral resolution matters.
+Full eval logs with REF/HYP examples are in [`results/`](results/).
 
-### Inference Speed
+**Scaling progression:**
+
+| Model | Params | Greedy WER |
+|-------|--------|-----------|
+| Proof of concept (d=256, 6L) | 9M | 40.6% |
+| Base (d=512, 8L) | 48.6M | 18.9% |
+| Large (d=1024, 12L) | 290M | 6.5% |
+
+**Training curve** (290M model, 30 epochs on ~1220h IMBE-encoded speech):
+
+```
+Epoch  2: WER=55.2%  val_loss=0.873
+Epoch 10: WER=25.4%  val_loss=0.443
+Epoch 20: WER=16.4%  val_loss=0.350
+Epoch 30: WER=14.7%  val_loss=0.379
+```
+
+Training WER is on the full multi-source val set (LibriSpeech + TEDLIUM + GigaSpeech). The 6.5%/1.9% numbers are on the LibriSpeech speaker-split val, comparable to standard benchmarks. Full training curve in [`results/training_curve_1024d.txt`](results/training_curve_1024d.txt).
+
+W&B run: [sarah-1024d-12l-ddp](https://wandb.ai/luxprimatech/imbe-asr/runs/zrnez9mv)
+
+**Inference speed:**
 
 | Call Duration | GPU (3090 Ti) | CPU |
 |---------------|--------------|-----|
@@ -87,99 +81,100 @@ For comparison, the previous BFCC-based approach (20-dim input) plateaued at 56%
 
 200x real-time on CPU. Fast enough for any deployment scenario.
 
-## Quick Start
+## Architecture
+
+Conformer-CTC. Nothing exotic -- the interesting part is the input, not the model.
+
+- Input projection: Linear(170, 1024) + LayerNorm + Dropout
+- Encoder: 12 x ConformerBlock (FFN/2 -> MHSA -> ConvModule(k=31) -> FFN/2 -> LN)
+- CTC head: Linear(1024, 40) -> log_softmax
+- 290M parameters
+- Character-level tokenizer: blank + A-Z + 0-9 + space + apostrophe = 40 classes
+
+Trained with CTC loss, cosine LR schedule, AdamW, bf16 mixed precision on 2x RTX 3090 Ti (~4 days).
+
+Bayesian hyperparameter sweep confirmed depth matters more than width. Optimal: d=1024, 12 layers, ff_mult=4.
+
+## Training Data
+
+~1220 hours of clean speech (LibriSpeech 960h, TEDLIUM 3 ~452h, GigaSpeech S ~250h), IMBE-encoded through libimbe to produce 170-dim frame parameters. The model learns to read IMBE parameters the way a conventional ASR model reads mel spectrograms.
+
+Subtle detail: software-encoded IMBE has a 2-frame analysis delay (frame N describes audio at frame N-2). Real P25 radio doesn't have this. All software-encoded training data is trimmed accordingly.
+
+For P25 domain adaptation: ~20 hours of real radio captures, pseudo-labeled with a Whisper large-v3 + Qwen3-ASR ensemble, filtered for hallucinations.
+
+## Reproducing
 
 ```bash
-# Precompute 170-dim features for LibriSpeech IMBE pairs
+# Precompute 170-dim IMBE features from audio
 python -m src.precompute --pairs-dir data/pairs --workers 12
 
-# Train (proof-of-concept 9.2M model)
-python -m src.train \
-    --pairs-dir data/pairs \
-    --librispeech-dir data/LibriSpeech/train-clean-100 \
-    --epochs 50 --batch-size 32 --lr 3e-4
+# Train (multi-source, DDP)
+torchrun --nproc_per_node=2 -m src.train \
+    --mmap-dir data/packed \
+    --d-model 1024 --n-layers 12 --n-heads 16 --d-ff 4096 \
+    --epochs 30 --batch-size 4 --accum-steps 32 --lr 3e-4
 
-# Run inference on a TAP file
-python -m src.inference \
-    --checkpoint checkpoints/best.pth \
-    --tap-file path/to/call.tap
+# Evaluate (greedy)
+python -m src.eval checkpoints/best.pth \
+    --pairs-dir data/pairs --batch-size 16
 
-# Streaming demo
-python -m src.inference \
-    --checkpoint checkpoints/best.pth \
-    --npz path/to/file.npz \
-    --stream --chunk-ms 500
-
-# Evaluate with beam search + language model
+# Evaluate (beam search + LM)
 python -m src.eval checkpoints/best.pth \
     --beam --lm-path data/lm/5gram.bin --unigrams data/lm/unigrams.txt
+
+# Inference on a P25 .tap file
+python -m src.inference --checkpoint checkpoints/best.pth \
+    --tap-file path/to/call.tap
+
+# Watch directory for live transcription
+python -m src.inference --checkpoint checkpoints/best.pth \
+    --watch ~/trunk-recorder/audio/
+
+# P25 fine-tuning (DDP)
+torchrun --nproc_per_node=2 scripts/finetune_p25.py \
+    --checkpoint checkpoints/best.pth \
+    --p25-dir data/p25_labeled --base-mmap data/packed \
+    --epochs 15 --lr 3e-5 --amp
 ```
 
 ## Project Structure
 
 ```
-imbe_asr/
-├── CLAUDE.md              <- Claude Code project instructions
-├── README.md              <- You are here
-├── .gitignore
-├── src/                   <- All model/training/inference code
-│   ├── model.py           <- Conformer-CTC architecture (9.2M params)
-│   ├── tokenizer.py       <- Character-level CTC tokenizer (40 classes)
-│   ├── dataset.py         <- LibriSpeech IMBE dataset + collate_fn + speaker split
-│   ├── dataset_p25.py     <- Real P25 TAP dataset (talkgroup-based split)
-│   ├── train.py           <- Training loop (CTC loss, cosine LR, W&B)
-│   ├── eval.py            <- WER/CER evaluation (standalone + library)
-│   ├── decode.py          <- Beam search with KenLM language model
-│   ├── inference.py       <- Single-file, TAP file, and streaming inference
-│   └── precompute.py      <- frame_vectors -> 170-dim raw_params via libimbe
-├── scripts/               <- Data preparation and utility scripts
-│   ├── prepare_librispeech.sh  <- Download LibriSpeech + IMBE-encode + precompute
-│   ├── prepare_p25_tap.py      <- TAP files -> transcribed NPZ via ASR server
-│   └── build_lm.py             <- Build KenLM n-gram language model
-├── configs/               <- Training configurations
-│   ├── base_9m.yaml       <- POC: d_model=256, 6 layers, 9.2M params
-│   └── large_30m.yaml     <- Scale-up: d_model=512, 8 layers, ~30M params
-├── data/                  <- Training data (not checked in)
-│   ├── pairs/             <- LibriSpeech IMBE NPZ files
-│   ├── p25_raw/           <- Real P25 transcribed NPZ files
-│   └── lm/               <- Language model artifacts
-└── checkpoints/           <- Model checkpoints (not checked in)
+src/
+  model.py            Conformer-CTC architecture (scalable: 9M to 290M)
+  tokenizer.py        Character-level CTC tokenizer (40 classes)
+  dataset.py          LibriSpeech IMBE dataset + speaker splits
+  dataset_unified.py  Multi-source dataset + memory-mapped format
+  dataset_p25.py      Real P25 dataset (talkgroup splits)
+  train.py            Training loop (CTC, cosine LR, DDP multi-GPU)
+  eval.py             WER/CER evaluation (greedy + beam)
+  decode.py           Beam search with KenLM
+  inference.py        TAP file / watch mode / streaming inference
+  live.py             Live socket-based transcription
+  precompute.py       Audio -> 170-dim IMBE features via libimbe
+
+scripts/
+  finetune_p25.py     P25 fine-tuning with base data mixing (DDP)
+  pseudo_label.py     Multi-ASR pseudo-labeling for P25
+  prepare_*.py        Dataset preparation scripts
+  build_lm.py         KenLM language model training
+
+results/              Eval logs and training curves
+configs/              Training configurations
 ```
 
 ## Dependencies
 
-- Python 3.10+
-- PyTorch 2.0+
-- numpy
-- `libimbe.so` (IMBE vocoder C library, built from `vocoder/` in parent repo)
-- pyctcdecode + kenlm (optional, for beam search)
-- wandb (optional, for experiment tracking)
-- requests (for P25 TAP data preparation)
+- Python 3.10+, PyTorch 2.0+
+- `libimbe.so` -- IMBE vocoder C library (for feature extraction)
+- pyctcdecode + kenlm (beam search decoding)
+- wandb (experiment tracking)
 
-## Data Pipeline
+## What's Next
 
-### LibriSpeech (pretraining)
+- P25 fine-tuning the 290M model (in progress)
+- Live transcription pipeline from trunk-recorder IMBE tap
+- Generalization to other low-bitrate codecs (Codec2, MELPe, AMBE)
 
-```
-LibriSpeech FLAC -> IMBE encode (generate_pairs.py) -> NPZ with frame_vectors
-    -> precompute (src.precompute) -> NPZ with raw_params (170-dim)
-    -> train (src.train) with LibriSpeech transcripts
-```
-
-### Real P25 (fine-tuning)
-
-```
-P25 TAP JSON (from trunk-recorder IMBE tap socket)
-    -> decode through libimbe (raw_params + synthesized WAV)
-    -> transcribe WAV via ASR server (Qwen3-ASR)
-    -> save NPZ with raw_params + transcript
-    -> fine-tune (src.train with --checkpoint)
-```
-
-## TODO
-
-- [ ] **Expand training dataset** -- current 103.7h (train-clean-100) is small. Add train-clean-360, train-other-500, and other LibriSpeech splits. More data is the single biggest lever for WER improvement before scaling the model.
-- [ ] Scale model to ~30-80M params (d_model=512, 8-12 layers) for broader vocabulary coverage
-- [ ] Mixed training on LibriSpeech + real P25 data for domain coverage without catastrophic forgetting
-- [ ] Domain-specific LM trained on P25 transcripts (unit numbers, 10-codes, street names, medical terminology, general conversation)
-- [ ] Incorporate more real P25 TAP data from additional agencies/regions
+The broader question: if IMBE works this well at 4.4 kbps, what about Codec2 at 700 bps? MELPe at 2.4 kbps? Speech codecs are already doing feature extraction -- we just need to learn to read their output.

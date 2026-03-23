@@ -56,8 +56,8 @@ configs/          Training configurations
   base_9m.yaml       Original 9.2M proof-of-concept
   large_30m.yaml     30M param config
   data_expanded.yaml ~1220h multi-source data config (LS 100+360+500, TEDLIUM, GigaSpeech)
-  data_eddie.yaml    Data paths for eddie (10.2.2.2)
-  data_sarah.yaml    Data paths for sarah (10.2.2.148)
+  data_eddie.yaml    Data paths for local GPU workstation
+  data_sarah.yaml    Data paths for training server
   sweep.yaml         W&B Bayesian hyperparameter sweep config
 
 data/             Training data (not checked in)
@@ -100,7 +100,7 @@ python -m src.inference --checkpoint checkpoints/p25_finetuned/best.pth \
 
 # Watch directory for new .tap files (live transcription)
 python -m src.inference --checkpoint checkpoints/p25_finetuned/best.pth \
-    --watch ~/trunk-recorder-mqtt/tr_audio/butco/
+    --watch ~/trunk-recorder/audio/
 
 # Streaming demo
 python -m src.inference --checkpoint checkpoints/best.pth \
@@ -116,7 +116,7 @@ python -m src.eval checkpoints/best.pth --beam \
 
 # Pseudo-label P25 .tap files (requires Whisper + Qwen3 servers)
 python3 scripts/pseudo_label.py \
-    --tap-dir ~/trunk-recorder-mqtt/tr_audio/butco/ \
+    --tap-dir ~/trunk-recorder/audio/ \
     --output-dir data/p25_labeled
 ```
 
@@ -133,8 +133,7 @@ python3 scripts/pseudo_label.py \
 ## External Resources
 
 - **libimbe.so** locations: `./vocoder/libimbe.so` or `/mnt/disk/p25_train/vocoder/libimbe.so`
-- **Training data on sarah** (10.2.2.148): `/mnt/disk/p25_train/`
-- **Qwen3-ASR server**: `http://localhost:8765/v1/audio/transcriptions` (P25-tuned, on the local A5000)
+- **Qwen3-ASR server**: `http://localhost:8765/v1/audio/transcriptions` (for pseudo-labeling)
 - **W&B project**: `imbe-asr` under `luxprimatech`
 
 ## Architecture Details
