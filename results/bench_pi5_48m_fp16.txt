@@ -1,0 +1,23 @@
+============================================================
+IMBE-ASR Inference Benchmark
+============================================================
+Model: 48,592,935 params (48.6M)
+Config: d=512, layers=8, heads=8, ff=2048
+Dtype: float16
+Device: cpu (Raspberry Pi 5, 4GB, aarch64)
+Load time: 1.43s
+Memory: 1016 MB (model) / 219 MB (baseline)
+
+Duration         Mean      Std      Min      Max      RTF
+------------------------------------------------------------
+1s (50 fr)     437.9ms     2.6ms   434.9ms   442.3ms  0.4379x
+2s (100 fr)    848.2ms    28.8ms   830.8ms   905.7ms  0.4241x
+5s (250 fr)   2121.3ms    54.2ms  2090.8ms  2229.7ms  0.4243x
+10s (500 fr)  4856.7ms    54.7ms  4800.0ms  4952.7ms  0.4857x
+30s (1500 fr) 23833.6ms   171.9ms 23544.6ms 24035.1ms  0.7945x
+
+RTF < 1.0 = faster than real-time
+Memory after benchmark: 1007 MB
+
+Note: fp16 is SLOWER on Pi 5 CPU (no hardware fp16 acceleration).
+fp32 is the correct choice for ARM CPU inference.

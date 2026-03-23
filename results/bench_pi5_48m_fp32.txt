@@ -1,0 +1,20 @@
+============================================================
+IMBE-ASR Inference Benchmark
+============================================================
+Model: 48,592,935 params (48.6M)
+Config: d=512, layers=8, heads=8, ff=2048
+Dtype: float32
+Device: cpu (Raspberry Pi 5, 4GB, aarch64)
+Load time: 1.26s
+Memory: 995 MB (model) / 225 MB (baseline)
+
+Duration         Mean      Std      Min      Max      RTF
+------------------------------------------------------------
+1s (50 fr)     202.4ms     0.8ms   201.3ms   203.4ms  0.2024x
+2s (100 fr)    267.6ms     6.5ms   261.8ms   279.8ms  0.1338x
+5s (250 fr)    460.5ms    14.6ms   447.1ms   478.8ms  0.0921x
+10s (500 fr)   800.0ms     6.3ms   792.8ms   810.4ms  0.0800x
+30s (1500 fr)  3006.2ms    22.6ms  2982.8ms  3045.2ms  0.1002x
+
+RTF < 1.0 = faster than real-time
+Memory after benchmark: 1068 MB
