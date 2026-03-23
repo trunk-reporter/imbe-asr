@@ -200,6 +200,8 @@ Our [fork of trunk-recorder](https://github.com/trunk-reporter/trunk-recorder) a
 
 Without this fork and plugin (or another source of raw IMBE symbols), the models cannot be used on live radio. The whole point is to skip audio reconstruction -- if you only have audio, use a conventional ASR model like [Whisper](https://github.com/openai/whisper) or our [Qwen3-ASR P25 fine-tune](https://huggingface.co/trunk-reporter/qwen3-asr-p25-0.6B).
 
+> **!! NOTE:** This repo does not yet include a receiver for symbolstream's TCP/UDP output. The current `src/live.py` uses an older Unix DGRAM socket interface that predates the plugin. This was an oversight before release -- a proper symbolstream client is coming shortly. In the meantime, `src/inference.py --watch` works with `.tap` files written to disk.
+
 ## Dependencies
 
 - Python 3.10+, PyTorch 2.0+
