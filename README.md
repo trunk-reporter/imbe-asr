@@ -192,10 +192,19 @@ results/              Eval logs and training curves
 configs/              Training configurations
 ```
 
+## Getting IMBE Symbols from P25 Radio
+
+**Important:** Standard trunk-recorder only outputs reconstructed audio. To use IMBE-ASR, you need the raw IMBE codec symbols (codewords) before audio reconstruction.
+
+Our [fork of trunk-recorder](https://github.com/trunk-reporter/trunk-recorder) adds a `voice_codec_data()` callback that outputs the raw IMBE frame vectors as `.tap` files. This is what the model consumes -- the 8 codeword parameters per 20ms frame, decoded into 170-dim features via libimbe.
+
+Without this fork (or another source of raw IMBE symbols), the models cannot be used on live radio. The whole point is to skip audio reconstruction -- if you only have audio, use a conventional ASR model like [Whisper](https://github.com/openai/whisper) or our [Qwen3-ASR P25 fine-tune](https://huggingface.co/trunk-reporter/qwen3-asr-p25-0.6B).
+
 ## Dependencies
 
 - Python 3.10+, PyTorch 2.0+
-- `libimbe.so` -- IMBE vocoder C library (for feature extraction)
+- `libimbe.so` -- IMBE vocoder C library (for feature extraction from codewords)
+- [trunk-recorder fork](https://github.com/trunk-reporter/trunk-recorder) (for live P25 symbol capture)
 - pyctcdecode + kenlm (beam search decoding)
 - wandb (experiment tracking)
 
