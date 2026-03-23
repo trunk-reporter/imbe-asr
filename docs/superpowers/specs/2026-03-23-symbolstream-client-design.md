@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TCP client that receives JSON-mode symbolstream plugin output from trunk-recorder, accumulates IMBE frames by call, and transcribes on call completion. Proof-of-concept / dev tool -- validates the end-to-end pipeline from live radio to text via symbolstream.
+TCP server that receives JSON-mode symbolstream plugin output from trunk-recorder. The symbolstream plugin connects to us and pushes IMBE frames. We accumulate frames by call and transcribe on call completion. Proof-of-concept / dev tool -- validates the end-to-end pipeline from live radio to text via symbolstream.
 
 ## File
 
@@ -10,7 +10,7 @@ TCP client that receives JSON-mode symbolstream plugin output from trunk-recorde
 
 ## Protocol
 
-Connects to symbolstream plugin over TCP (JSON mode, `sendJSON=true`). The wire format is:
+Accepts TCP connection from symbolstream plugin (JSON mode, `sendJSON=true`). The plugin connects to us and pushes frames. The wire format is:
 
 ### Codec frame
 
@@ -66,8 +66,12 @@ With `--stream` flag, transcribe every `--stream-interval` seconds (default 1.0)
 
 ## Connection handling
 
-- Connect to `host:port` on startup
-- On connection failure or disconnect: log, wait with linear backoff (1s, 2s, 3s, ... capped at 10s), retry
+The symbolstream plugin connects *to us* -- we are a TCP server, not a client. The plugin config specifies our address and port as its destination.
+
+- Bind and listen on `--host` / `--port` (default `0.0.0.0:9090`)
+- Accept incoming connection from symbolstream plugin
+- One connection at a time (single trunk-recorder instance)
+- On disconnect: log, return to listening for a new connection
 - Clean shutdown on SIGINT (Ctrl+C): transcribe any in-progress calls, then exit
 
 ## CLI
@@ -75,7 +79,7 @@ With `--stream` flag, transcribe every `--stream-interval` seconds (default 1.0)
 ```
 python -m src.symbolstream_client \
     --checkpoint checkpoints/best.pth \
-    --host 127.0.0.1 \
+    --host 0.0.0.0 \
     --port 9090 \
     --stream \
     --stream-interval 1.0 \
@@ -109,7 +113,7 @@ Encrypted calls (from call_end metadata) are skipped with a note:
 - Binary wire format (sendJSON=false)
 - Webhook / MQTT / external output
 - ONNX Runtime inference (use PyTorch for POC)
-- Multi-server connections
+- Multiple simultaneous plugin connections
 - C implementation (future -- port protocol handling into inference/imbe_asr.c)
 
 ## Dependencies
