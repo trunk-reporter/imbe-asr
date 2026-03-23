@@ -71,12 +71,22 @@ Each sample is one transmission (call). Required fields:
 | `tags` | string list | Free-form tags: `["fire", "dispatch", "ems", "traffic_stop", "conversational"]` |
 | `notes` | string | Reviewer notes |
 
-## What NOT to Include
+### Review Support (required for human validation)
 
-- **No audio.** The dataset is codec parameters only. Audio can be reconstructed from the codewords if needed, but storing it doubles the size for no training benefit.
-- **No agency names or officer names.** Region codes only. Privacy matters.
-- **No encrypted transmissions.** Obvious.
-- **No PII in transcripts.** Phone numbers, SSNs, addresses with apartment numbers, names of victims/suspects should be redacted with `[REDACTED]`. Street addresses and unit numbers in dispatch context are fine.
+| Field | Type | Description |
+|-------|------|-------------|
+| `audio` | bytes | Reconstructed audio (WAV/OGG) from codec params, for human reviewers to listen |
+| `talkgroup_tag` | string | Human-readable talkgroup name (e.g., `"Hamilton County Fire Dispatch"`) |
+| `talkgroup_group` | string | Talkgroup category if known (e.g., `"Fire Dispatch"`, `"Law Enforcement"`, `"EMS"`, `"Public Works"`) |
+
+Audio is reconstructed from the codewords via the appropriate codec library and stored alongside for reviewer playback. It is **not used for model training** -- the model reads codec parameters directly. But reviewers cannot verify a transcript without hearing the audio, and talkgroup context is essential for understanding domain-specific language.
+
+## Privacy and Exclusions
+
+- **No encrypted transmissions.** Excluded during collection.
+- **No PII in transcripts.** Phone numbers, SSNs, names of victims/suspects should be redacted with `[REDACTED]`. Street addresses and unit numbers in dispatch context are fine -- they are part of the operational vocabulary the model needs to learn.
+- **Talkgroup names are included** for review context, but specific officer names or badge numbers in metadata should be omitted. Source radio IDs (`src_id`) are numeric only.
+- **Region codes** (e.g., `"US-OH"`) are used instead of specific agency names in the dataset metadata. However, `talkgroup_tag` will implicitly identify agencies -- this is acceptable as talkgroup assignments are public information (RadioReference, etc.).
 
 ## Storage Format
 
@@ -85,6 +95,7 @@ Each sample is one transmission (call). Required fields:
 For a public HF dataset, Parquet is standard -- it's columnar, compressed, streamable, and HF Datasets loads it natively. Each row is one transmission.
 
 - `codec_params` stored as a binary blob (the raw uint32 array, serialized)
+- `audio` stored as a binary blob (compressed OGG preferred for size, WAV acceptable)
 - All metadata as typed columns
 - Partitioned by `codec_type` for efficient filtering
 
