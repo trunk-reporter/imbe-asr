@@ -196,9 +196,9 @@ configs/              Training configurations
 
 **Important:** Standard trunk-recorder only outputs reconstructed audio. To use IMBE-ASR, you need the raw IMBE codec symbols (codewords) before audio reconstruction.
 
-Our [fork of trunk-recorder](https://github.com/trunk-reporter/trunk-recorder) adds a `voice_codec_data()` callback that outputs the raw IMBE frame vectors as `.tap` files. This is what the model consumes -- the 8 codeword parameters per 20ms frame, decoded into 170-dim features via libimbe.
+Our [fork of trunk-recorder](https://github.com/trunk-reporter/trunk-recorder) adds a `voice_codec_data()` callback that exposes the raw IMBE frame vectors. The [symbolstream](https://github.com/trunk-reporter/symbolstream) plugin uses this callback to stream raw codec symbols over TCP/UDP to a remote server -- the same way `simplestream` streams audio, but with the pre-vocoder codec parameters instead. This is what the model consumes: the 8 codeword parameters per 20ms frame, decoded into 170-dim features via libimbe.
 
-Without this fork (or another source of raw IMBE symbols), the models cannot be used on live radio. The whole point is to skip audio reconstruction -- if you only have audio, use a conventional ASR model like [Whisper](https://github.com/openai/whisper) or our [Qwen3-ASR P25 fine-tune](https://huggingface.co/trunk-reporter/qwen3-asr-p25-0.6B).
+Without this fork and plugin (or another source of raw IMBE symbols), the models cannot be used on live radio. The whole point is to skip audio reconstruction -- if you only have audio, use a conventional ASR model like [Whisper](https://github.com/openai/whisper) or our [Qwen3-ASR P25 fine-tune](https://huggingface.co/trunk-reporter/qwen3-asr-p25-0.6B).
 
 ## Dependencies
 
