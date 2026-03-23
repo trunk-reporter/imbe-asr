@@ -1,0 +1,60 @@
+Raspberry Pi 5 (4GB, aarch64) -- C Engine + ONNX Runtime 1.22.0
+
+Binary: 70KB (gcc -O2), no Python dependency
+
+============================================================
+48.6M model -- ONNX fp32 (195.2 MB)
+============================================================
+Load time: 442ms
+
+  Duration        Mean      Min       Max       RTF
+  --------------------------------------------------
+   1s (  50 fr)     66.2ms     66.1ms     66.5ms   0.0662x
+   2s ( 100 fr)    114.6ms    113.3ms    116.9ms   0.0573x
+   5s ( 250 fr)    293.6ms    292.5ms    296.3ms   0.0587x
+  10s ( 500 fr)    659.6ms    656.5ms    662.9ms   0.0660x
+  30s (1500 fr)   2780.4ms   2778.2ms   2783.5ms   0.0927x
+
+============================================================
+48.6M model -- ONNX uint8 (59.4 MB)
+============================================================
+Load time: 273ms
+
+  Duration        Mean      Min       Max       RTF
+  --------------------------------------------------
+   1s (  50 fr)     67.7ms     67.6ms     67.7ms   0.0677x
+   2s ( 100 fr)    129.3ms    128.6ms    131.1ms   0.0647x
+   5s ( 250 fr)    341.8ms    339.6ms    347.4ms   0.0684x
+  10s ( 500 fr)    787.8ms    782.3ms    802.9ms   0.0788x
+  30s (1500 fr)   3186.3ms   3180.9ms   3193.0ms   0.1062x
+
+============================================================
+290M model -- ONNX uint8 (312.3 MB)
+============================================================
+Load time: 861ms
+
+  Duration        Mean      Min       Max       RTF
+  --------------------------------------------------
+   1s (  50 fr)    242.6ms    242.2ms    243.1ms   0.2426x
+   2s ( 100 fr)    472.6ms    462.6ms    506.3ms   0.2363x
+   5s ( 250 fr)   1244.8ms   1243.1ms   1249.1ms   0.2490x
+  10s ( 500 fr)   2776.6ms   2767.9ms   2794.4ms   0.2777x
+  30s (1500 fr)  10812.4ms  10775.2ms  10857.1ms   0.3604x
+
+============================================================
+Summary vs Python runtimes (10s call)
+============================================================
+                        10s call    RTF       Notes
+C + ORT fp32 (48.6M)     660ms     0.066x    15x real-time
+C + ORT uint8 (48.6M)    788ms     0.079x    13x real-time
+C + ORT uint8 (290M)    2777ms     0.278x    3.6x real-time
+Python ORT fp32 (48.6M)  649ms     0.065x    ~same as C
+Python ORT int8 (290M)  3507ms     0.351x    20% slower than C
+PyTorch fp32 (48.6M)     800ms     0.080x    1.2x slower than C
+PyTorch fp32 (290M)      OOM       --        doesn't fit in 4GB
+
+Notes:
+- int8 quantized models require ORT C library with ConvInteger support
+  (QUInt8 format works; QInt8 does not on aarch64 ORT < 1.24)
+- C binary is 70KB, no Python runtime needed
+- 290M uint8 uses ~1.3GB RAM total (model + inference buffers)
