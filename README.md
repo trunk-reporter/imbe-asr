@@ -199,10 +199,21 @@ configs/              Training configurations
 - pyctcdecode + kenlm (beam search decoding)
 - wandb (experiment tracking)
 
+## Beyond IMBE
+
+The approach is codec-agnostic. IMBE and AMBE/AMBE+2 are the same family (both DVSI) -- same parametric structure: f0, spectral amplitudes, voiced/unvoiced decisions. Swapping `libimbe` for `libambe` in feature extraction is the only change needed. Not yet tested, but if it transfers, the coverage is significant:
+
+| Codec | Bitrate | Systems |
+|-------|---------|---------|
+| IMBE | 4.4 kbps | P25 Phase 1 |
+| AMBE+2 | 2.4-9.6 kbps | P25 Phase 2, DMR, dPMR, NXDN, D-STAR, Fusion |
+| Codec2 | 0.7-3.2 kbps | FreeDV, open-source HF radio |
+| MELPe | 1.2-2.4 kbps | NATO STANAG 4591, military |
+
+DMR alone covers most commercial/industrial two-way radio worldwide. D-STAR is amateur radio. NXDN is Kenwood/Icom. If the principle holds -- that speech codecs are already doing feature extraction and we just need to learn to read their output -- this generalizes well beyond P25.
+
 ## What's Next
 
 - P25 fine-tuning the 290M model (in progress)
 - Live transcription pipeline from trunk-recorder IMBE tap
-- Generalization to other low-bitrate codecs (Codec2, MELPe, AMBE)
-
-The broader question: if IMBE works this well at 4.4 kbps, what about Codec2 at 700 bps? MELPe at 2.4 kbps? Speech codecs are already doing feature extraction -- we just need to learn to read their output.
+- AMBE+2 support (DMR, P25 Phase 2, D-STAR)
