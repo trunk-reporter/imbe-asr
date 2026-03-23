@@ -2,6 +2,16 @@
 
 ASR straight from P25 IMBE codec parameters -- skip audio reconstruction entirely and go from the digital bitstream to text. 290M Conformer-CTC, **1.9% WER** with language model on LibriSpeech-IMBE.
 
+**Models:** [trunk-reporter/imbe-asr collection](https://huggingface.co/collections/trunk-reporter/imbe-asr-speech-recognition-from-vocoder-parameters-69c0a4f68ef670b5bf68449d) on Hugging Face
+
+| Model | Params | Greedy WER | Beam WER | HF Repo |
+|-------|--------|-----------|----------|---------|
+| Large | 290M | 6.5% | **1.9%** | [imbe-asr-large-1024d](https://huggingface.co/trunk-reporter/imbe-asr-large-1024d) |
+| Base | 48.6M | 18.9% | -- | [imbe-asr-base-512d](https://huggingface.co/trunk-reporter/imbe-asr-base-512d) |
+| Base P25 | 48.6M | 19.2% | -- | [imbe-asr-base-512d-p25](https://huggingface.co/trunk-reporter/imbe-asr-base-512d-p25) |
+
+All models available in SafeTensors + ONNX (fp32, int8, uint8) formats.
+
 ## The Problem
 
 P25 digital radio (law enforcement, fire, EMS) uses the IMBE vocoder -- a 4.4 kbps codec from the 90s. If you want to transcribe it, the standard approach is: decode IMBE -> reconstruct audio -> run Whisper or whatever.
