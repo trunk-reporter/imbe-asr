@@ -30,7 +30,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.inference import load_model, load_stats, transcribe, _read_tap_file
+from src.inference import load_model, load_stats, transcribe, _read_tap_file, OnnxModel
 from src.precompute import decode_frame_vectors
 
 logger = logging.getLogger("imbe_asr")
@@ -69,15 +69,20 @@ async def lifespan(app: FastAPI):
     logger.info("Loading model from %s", checkpoint_path)
     _model, _device, ckpt = load_model(checkpoint_path, device)
     _mean, _std = load_stats(stats_path)
+    epoch = ckpt.get("epoch", -1) + 1
+    best_wer = ckpt.get("best_wer", None)
+    is_onnx = getattr(_model, "is_onnx", False)
     _ckpt_info = {
         "checkpoint": checkpoint_path,
-        "epoch": ckpt.get("epoch", -1) + 1,
-        "best_wer": ckpt.get("best_wer", None),
+        "epoch": epoch,
+        "best_wer": best_wer,
+        "format": "onnx" if is_onnx else "pytorch",
     }
     logger.info(
-        "Model loaded: epoch %d, best_wer=%.1f%%, device=%s",
-        _ckpt_info["epoch"],
-        _ckpt_info.get("best_wer") or 0,
+        "Model loaded (%s): epoch %d, best_wer=%.1f%%, device=%s",
+        _ckpt_info["format"],
+        epoch,
+        best_wer or 0,
         _device,
     )
     yield
@@ -106,6 +111,7 @@ class HealthResponse(BaseModel):
     checkpoint: str | None = None
     epoch: int | None = None
     best_wer: float | None = None
+    format: str | None = None
 
 
 # ---------------------------------------------------------------------------

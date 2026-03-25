@@ -25,6 +25,8 @@ Usage:
 """
 
 import argparse
+import json
+import os
 import struct
 import sys
 import time
@@ -34,6 +36,40 @@ import torch
 
 from .model import ConformerCTC
 from .tokenizer import VOCAB_SIZE, decode_greedy
+
+
+class OnnxModel:
+    """Wrapper around an ONNX InferenceSession that mimics the PyTorch model
+    interface enough for callers to detect format and run inference."""
+
+    def __init__(self, session):
+        self.session = session
+        self.is_onnx = True
+
+    def __call__(self, x_np, lengths_np):
+        """Run ONNX inference.
+
+        Args:
+            x_np: float32 numpy array of shape (B, T, 170)
+            lengths_np: int64 numpy array of shape (B,)
+
+        Returns:
+            log_probs: (B, T', vocab_size) numpy array
+            output_lengths: (B,) numpy array
+        """
+        input_names = [inp.name for inp in self.session.get_inputs()]
+        feeds = {input_names[0]: x_np}
+        if len(input_names) > 1:
+            feeds[input_names[1]] = lengths_np
+        outputs = self.session.run(None, feeds)
+        # outputs[0] = logits or log_probs, outputs[1] = output_lengths (if present)
+        logits = outputs[0]
+        # Apply log_softmax if the output looks like raw logits
+        # (check if values sum to ~1 along last dim after exp)
+        from scipy.special import log_softmax as sp_log_softmax
+        log_probs = sp_log_softmax(logits, axis=-1)
+        out_lengths = outputs[1] if len(outputs) > 1 else np.array([log_probs.shape[1]])
+        return log_probs, out_lengths
 
 # Binary TAP file format (trunk-recorder imbe_tap file mode):
 #   Header: uint32 magic (0x494D4245), uint32 version (1)
@@ -120,13 +156,84 @@ def _strip_silence_frames(fv):
 
 
 def load_model(checkpoint_path, device=None):
-    """Load model and stats from checkpoint.
+    """Load model from checkpoint.
+
+    Supports three checkpoint formats, detected by file extension:
+      - ``.pth``  — PyTorch checkpoint (dict with model_state_dict + config)
+      - ``.safetensors`` — SafeTensors state dict; config.json must sit in the
+        same directory with keys: input_dim, d_model, n_heads, d_ff, n_layers,
+        conv_kernel_size (or conv_kernel), vocab_size, dropout, use_subsampling.
+      - ``.onnx`` — ONNX model loaded via onnxruntime.  Returns an
+        :class:`OnnxModel` wrapper instead of a PyTorch model.
 
     Returns:
-        model: ConformerCTC model in eval mode
-        device: torch device
-        stats: (mean, std) tuple or None
+        model: ConformerCTC (PyTorch) or OnnxModel (ONNX), in eval mode
+        device: torch device (or "cpu" for ONNX)
+        ckpt_info: dict with at least ``config``; for .pth also contains
+                   ``epoch``, ``best_wer``, etc.
     """
+    ext = os.path.splitext(checkpoint_path)[1].lower()
+
+    # ----- ONNX -----
+    if ext == ".onnx":
+        import onnxruntime as ort
+
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        session = ort.InferenceSession(checkpoint_path, providers=providers)
+
+        # Try to load companion config.json
+        config_path = os.path.join(os.path.dirname(checkpoint_path), "config.json")
+        cfg = {}
+        if os.path.isfile(config_path):
+            with open(config_path) as f:
+                cfg = json.load(f)
+
+        model = OnnxModel(session)
+        onnx_device = torch.device("cpu")  # device not used for ONNX inference
+        ckpt_info = {"config": cfg, "epoch": cfg.get("epoch", -1),
+                     "best_wer": cfg.get("best_wer", 0)}
+        return model, onnx_device, ckpt_info
+
+    # ----- SafeTensors -----
+    if ext == ".safetensors":
+        from safetensors.torch import load_file
+
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        state_dict = load_file(checkpoint_path, device=str(device))
+
+        # Load config.json from same directory
+        config_path = os.path.join(os.path.dirname(checkpoint_path), "config.json")
+        if not os.path.isfile(config_path):
+            raise FileNotFoundError(
+                "SafeTensors checkpoint requires config.json in the same "
+                "directory: %s" % config_path
+            )
+        with open(config_path) as f:
+            cfg = json.load(f)
+
+        # Normalise config key names (config.json may use conv_kernel_size
+        # or conv_kernel, and use_subsampling or subsample)
+        conv_kernel = cfg.get("conv_kernel",
+                              cfg.get("conv_kernel_size", 31))
+        subsample = cfg.get("subsample",
+                            cfg.get("use_subsampling", False))
+
+        model = ConformerCTC(
+            input_dim=cfg["input_dim"], d_model=cfg["d_model"],
+            n_heads=cfg["n_heads"], d_ff=cfg["d_ff"],
+            n_layers=cfg["n_layers"], conv_kernel=conv_kernel,
+            vocab_size=cfg["vocab_size"], dropout=0.0,
+            subsample=subsample,
+        ).to(device).eval()
+        model.load_state_dict(state_dict)
+
+        ckpt_info = {"config": cfg, "epoch": cfg.get("epoch", -1),
+                     "best_wer": cfg.get("best_wer", 0)}
+        return model, device, ckpt_info
+
+    # ----- PyTorch .pth (default / backward compat) -----
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -155,13 +262,21 @@ def transcribe(model, features, device):
     """Transcribe a single utterance.
 
     Args:
-        model: ConformerCTC model
+        model: ConformerCTC or OnnxModel
         features: (T, D) numpy array, already normalized
         device: torch device
 
     Returns:
         Transcribed text string
     """
+    if getattr(model, "is_onnx", False):
+        x_np = features[np.newaxis, :, :].astype(np.float32)
+        lengths_np = np.array([features.shape[0]], dtype=np.int64)
+        log_probs, out_lengths = model(x_np, lengths_np)
+        # Convert back to torch for decode_greedy
+        lp = torch.from_numpy(log_probs[0, :int(out_lengths[0])])
+        return decode_greedy(lp)
+
     x = torch.from_numpy(features).unsqueeze(0).to(device)
     lengths = torch.tensor([features.shape[0]], device=device)
 
@@ -190,13 +305,20 @@ def stream_transcribe(model, features, device, chunk_frames=25,
         end = min(end, T)
         elapsed = end * 0.020
 
-        x = torch.from_numpy(features[:end]).unsqueeze(0).to(device)
-        lengths = torch.tensor([end], device=device)
+        if getattr(model, "is_onnx", False):
+            x_np = features[:end][np.newaxis, :, :].astype(np.float32)
+            lengths_np = np.array([end], dtype=np.int64)
+            log_probs_np, out_lengths_np = model(x_np, lengths_np)
+            lp = torch.from_numpy(log_probs_np[0, :int(out_lengths_np[0])])
+            hyp = decode_greedy(lp)
+        else:
+            x = torch.from_numpy(features[:end]).unsqueeze(0).to(device)
+            lengths = torch.tensor([end], device=device)
 
-        with torch.no_grad():
-            log_probs, out_lengths = model(x, lengths)
+            with torch.no_grad():
+                log_probs, out_lengths = model(x, lengths)
 
-        hyp = decode_greedy(log_probs[0, :out_lengths[0]].cpu())
+            hyp = decode_greedy(log_probs[0, :out_lengths[0]].cpu())
 
         sys.stdout.write('\r' + ' ' * (prev_line_len + 20) + '\r')
         line = "[%4.1fs/%4.1fs] %s" % (elapsed, total_dur, hyp)
@@ -256,8 +378,12 @@ def main():
 
     chunk_frames = args.chunk_ms // 20
 
-    print("Model: epoch %d, best WER=%.1f%%" %
-          (ckpt["epoch"] + 1, ckpt["best_wer"]))
+    epoch = ckpt.get("epoch", -1)
+    best_wer = ckpt.get("best_wer", 0) or 0
+    is_onnx = getattr(model, "is_onnx", False)
+    fmt_label = "ONNX" if is_onnx else "PyTorch"
+    print("Model (%s): epoch %d, best WER=%.1f%%" %
+          (fmt_label, epoch + 1, best_wer))
     print("Device: %s, chunk: %dms (%d frames)\n" %
           (device, args.chunk_ms, chunk_frames))
 
