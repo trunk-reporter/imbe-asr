@@ -201,13 +201,40 @@ Our [fork of trunk-recorder](https://github.com/trunk-reporter/trunk-recorder) a
 
 Without this fork and plugin (or another source of raw IMBE symbols), the models cannot be used on live radio. The whole point is to skip audio reconstruction -- if you only have audio, use a conventional ASR model like [Whisper](https://github.com/openai/whisper) or our [Qwen3-ASR P25 fine-tune](https://huggingface.co/trunk-reporter/qwen3-asr-p25-0.6B).
 
+### API Server
+
+Run the IMBE-ASR transcription server (OpenAI-compatible endpoint):
+
+```bash
+# With SafeTensors checkpoint (recommended)
+IMBE_ASR_CHECKPOINT=model.safetensors uvicorn server.app:app --port 8000
+
+# With ONNX checkpoint (for edge/CPU deployment)
+IMBE_ASR_CHECKPOINT=model_int8.onnx uvicorn server.app:app --port 8000
+
+# Docker
+docker build -f server/Dockerfile -t imbe-asr-server .
+docker run -p 8000:8000 \
+    -v /path/to/models:/models \
+    -e IMBE_ASR_CHECKPOINT=/models/model.safetensors \
+    imbe-asr-server
+```
+
+Endpoints:
+- `POST /v1/audio/transcriptions` — upload a `.tap` file, get text back
+- `GET /health` — model status, format, device info
+
+Supports all checkpoint formats: SafeTensors (`.safetensors`), ONNX (`.onnx`), and PyTorch (`.pth`).
+
+Integrates with [tr-engine](https://github.com/trunk-reporter/tr-engine) as an STT provider — set `STT_PROVIDER=imbe` and `IMBE_ASR_URL=http://host:8000`.
+
 ### Live transcription with symbolstream
 
 Start the symbolstream client (it listens for the plugin to connect):
 
 ```bash
 python -m src.symbolstream_client \
-    --checkpoint checkpoints/best.pth \
+    --checkpoint model.safetensors \
     --port 9090 --stream
 ```
 
@@ -232,8 +259,11 @@ Then configure the symbolstream plugin in trunk-recorder's `config.json` to poin
 - Python 3.10+, PyTorch 2.0+
 - `libimbe.so` -- IMBE vocoder C library (for feature extraction from codewords)
 - [trunk-recorder fork](https://github.com/trunk-reporter/trunk-recorder) (for live P25 symbol capture)
+- safetensors (SafeTensors checkpoint loading)
+- onnxruntime (ONNX checkpoint loading, optional)
 - pyctcdecode + kenlm (beam search decoding)
 - wandb (experiment tracking)
+- fastapi + uvicorn (API server)
 
 ## Beyond IMBE
 
@@ -251,5 +281,5 @@ DMR alone covers most commercial/industrial two-way radio worldwide. D-STAR is a
 ## What's Next
 
 - P25 fine-tuning the 290M model (in progress)
-- Live transcription pipeline from trunk-recorder IMBE tap
 - AMBE+2 support (DMR, P25 Phase 2, D-STAR)
+- tr-engine integration via MQTT tap transport (in progress)
