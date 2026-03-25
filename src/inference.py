@@ -10,7 +10,7 @@ Usage:
     # Single file
     python -m src.inference \
         --checkpoint checkpoints/best.pth \
-        --tap-file path/to/call.tap
+        --dvcf-file path/to/call.dvcf
 
     # Streaming demo
     python -m src.inference \
@@ -81,11 +81,11 @@ TAP_FRAME_FMT = "<IIII8H"
 TAP_FRAME_SIZE = struct.calcsize(TAP_FRAME_FMT)
 
 
-def _read_tap_file(path, strip_silence=True):
+def _read_dvcf_file(path, strip_silence=True):
     """Read a binary TAP file and return (frame_vectors, tgid).
 
     Args:
-        path: Path to .tap file
+        path: Path to .dvcf file
         strip_silence: If True, decode through libimbe and remove
             zero-energy frames (P25 signaling/preamble/silence).
 
@@ -343,9 +343,9 @@ def main():
     parser.add_argument("--stats", default=None,
                         help="Stats NPZ (default: same dir as checkpoint)")
     parser.add_argument("--npz", default=None, help="NPZ file to transcribe")
-    parser.add_argument("--tap-file", default=None, help="TAP file to transcribe")
+    parser.add_argument("--dvcf-file", default=None, help="TAP file to transcribe")
     parser.add_argument("--watch", default=None,
-                        help="Watch directory for new .tap files and transcribe")
+                        help="Watch directory for new .dvcf files and transcribe")
     parser.add_argument("--min-frames", type=int, default=10,
                         help="Min frames to attempt transcription (default: 10)")
     parser.add_argument("--stream", action="store_true",
@@ -464,21 +464,21 @@ def main():
             hyp = transcribe(model, feats, device)
             print("HYP: %s" % hyp)
 
-    elif args.tap_file:
+    elif args.dvcf_file:
         # Decode TAP file through libimbe first
         from .precompute import decode_frame_vectors
 
-        fv, tgid = _read_tap_file(args.tap_file)
+        fv, tgid = _read_dvcf_file(args.dvcf_file)
         if fv.shape[0] < args.min_frames:
             print("TAP: %s -- too short (%d frames), skipping" %
-                  (args.tap_file, fv.shape[0]))
+                  (args.dvcf_file, fv.shape[0]))
         else:
             raw_params = decode_frame_vectors(fv)
             feats = (raw_params.astype(np.float32) - mean) / std
 
             dur = feats.shape[0] * 0.020
             print("TAP: %s (%.1fs, %d frames, tgid=%s)" %
-                  (args.tap_file, dur, feats.shape[0], tgid))
+                  (args.dvcf_file, dur, feats.shape[0], tgid))
             print()
 
             if args.stream:
@@ -499,19 +499,19 @@ def main():
             print("ERROR: watch directory not found: %s" % watch_dir)
             sys.exit(1)
 
-        print("Watching %s for new .tap files..." % watch_dir)
+        print("Watching %s for new .dvcf files..." % watch_dir)
         print("Press Ctrl-C to stop.\n")
 
         seen = set()
         # Pre-populate with existing files so we only transcribe new ones
-        for p in watch_dir.rglob("*.tap"):
+        for p in watch_dir.rglob("*.dvcf"):
             seen.add(str(p))
         print("(skipping %d existing files)\n" % len(seen))
 
         try:
             while True:
                 new_files = []
-                for p in sorted(watch_dir.rglob("*.tap")):
+                for p in sorted(watch_dir.rglob("*.dvcf")):
                     sp = str(p)
                     if sp not in seen:
                         seen.add(sp)
@@ -521,7 +521,7 @@ def main():
                     # Wait briefly for file to finish writing
                     time.sleep(0.2)
                     try:
-                        fv, tgid = _read_tap_file(str(tap_path))
+                        fv, tgid = _read_dvcf_file(str(tap_path))
                     except Exception as e:
                         print("[ERR] %s: %s" % (tap_path.name, e))
                         continue
@@ -550,7 +550,7 @@ def main():
 
     else:
         parser.print_help()
-        print("\nProvide --npz, --tap-file, --watch, or --all-val")
+        print("\nProvide --npz, --dvcf-file, --watch, or --all-val")
 
 
 if __name__ == "__main__":

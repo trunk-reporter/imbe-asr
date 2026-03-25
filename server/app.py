@@ -2,7 +2,7 @@
 """FastAPI transcription server for IMBE ASR.
 
 Endpoints:
-    POST /v1/audio/transcriptions  — upload a .tap file, get text back
+    POST /v1/audio/transcriptions  — upload a .dvcf file, get text back
     GET  /health                   — model/server status
 
 Environment variables:
@@ -30,7 +30,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.inference import load_model, load_stats, transcribe, _read_tap_file, OnnxModel
+from src.inference import load_model, load_stats, transcribe, _read_dvcf_file, OnnxModel
 from src.precompute import decode_frame_vectors
 
 logger = logging.getLogger("imbe_asr")
@@ -135,7 +135,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
     # Read uploaded file to a temp location
     import tempfile
 
-    suffix = Path(file.filename).suffix if file.filename else ".tap"
+    suffix = Path(file.filename).suffix if file.filename else ".dvcf"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         content = await file.read()
         tmp.write(content)
@@ -145,7 +145,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         t0 = time.time()
 
         # Parse TAP file → IMBE frame vectors
-        fv, tgid = _read_tap_file(tmp_path)
+        fv, tgid = _read_dvcf_file(tmp_path)
 
         if fv.shape[0] < _min_frames:
             raise HTTPException(

@@ -96,7 +96,7 @@ python3 scripts/finetune_p25.py \
 
 # Inference on a TAP file (binary or JSON format)
 python -m src.inference --checkpoint checkpoints/p25_finetuned/best.pth \
-    --tap-file path/to/call.tap
+    --dvcf-file path/to/call.tap
 
 # Watch directory for new .tap files (live transcription)
 python -m src.inference --checkpoint checkpoints/p25_finetuned/best.pth \

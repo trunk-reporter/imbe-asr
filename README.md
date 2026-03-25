@@ -151,9 +151,9 @@ python -m src.eval checkpoints/best.pth \
 python -m src.eval checkpoints/best.pth \
     --beam --lm-path data/lm/5gram.bin --unigrams data/lm/unigrams.txt
 
-# Inference on a P25 .tap file
+# Inference on a P25 .dvcf file
 python -m src.inference --checkpoint checkpoints/best.pth \
-    --tap-file path/to/call.tap
+    --dvcf-file path/to/call.dvcf
 
 # Watch directory for live transcription
 python -m src.inference --checkpoint checkpoints/best.pth \
@@ -221,7 +221,7 @@ docker run -p 8000:8000 \
 ```
 
 Endpoints:
-- `POST /v1/audio/transcriptions` — upload a `.tap` file, get text back
+- `POST /v1/audio/transcriptions` — upload a `.dvcf` file, get text back
 - `GET /health` — model status, format, device info
 
 Supports all checkpoint formats: SafeTensors (`.safetensors`), ONNX (`.onnx`), and PyTorch (`.pth`).
@@ -282,4 +282,4 @@ DMR alone covers most commercial/industrial two-way radio worldwide. D-STAR is a
 
 - P25 fine-tuning the 290M model (in progress)
 - AMBE+2 support (DMR, P25 Phase 2, D-STAR)
-- tr-engine integration via MQTT tap transport (in progress)
+- tr-engine integration via MQTT dvcf transport (in progress)
