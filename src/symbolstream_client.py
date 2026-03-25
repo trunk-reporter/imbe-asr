@@ -110,6 +110,8 @@ def main():
                         help="Show progressive transcription during calls")
     parser.add_argument("--stream-interval", type=float, default=1.0,
                         help="Seconds between stream updates (default: 1.0)")
+    parser.add_argument("--output-dir", default=None,
+                        help="Write transcription JSON files to this directory")
     args = parser.parse_args()
 
     # Load model
@@ -156,6 +158,26 @@ def main():
         print("  >> %s" % hyp)
         print()
         sys.stdout.flush()
+
+        # Write transcription to disk if --output-dir is set
+        if args.output_dir:
+            os.makedirs(args.output_dir, exist_ok=True)
+            ts = int(time.time())
+            fname = "%s_%s_%d.json" % (tgid, call["src_id"], ts)
+            fpath = os.path.join(args.output_dir, fname)
+            result = {
+                "talkgroup": tgid,
+                "src_id": call["src_id"],
+                "duration": round(dur, 2),
+                "frames": len(frames),
+                "inference_ms": round(dt, 1),
+                "transcript": hyp,
+                "timestamp": ts,
+                "source": "symbolstream_client"
+            }
+            with open(fpath, "w") as out:
+                json.dump(result, out, indent=2)
+            print("  -> %s" % fpath)
 
     def stream_update(tgid, call):
         """Show progressive transcription for an in-progress call."""
