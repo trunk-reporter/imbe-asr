@@ -37,6 +37,7 @@ def _get_lib():
         return _lib
     candidates = [
         Path(__file__).resolve().parent.parent / "vocoder" / "libimbe.so",
+        Path(__file__).resolve().parent.parent / "libimbe.so",
         Path("/mnt/disk/p25_train/vocoder/libimbe.so"),
     ]
     for p in candidates:
