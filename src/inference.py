@@ -71,62 +71,122 @@ class OnnxModel:
         out_lengths = outputs[1] if len(outputs) > 1 else np.array([log_probs.shape[1]])
         return log_probs, out_lengths
 
-# Binary TAP file format (trunk-recorder imbe_tap file mode):
-#   Header: uint32 magic (0x494D4245), uint32 version (1)
-#   Frames: uint32 seq, uint32 tgid, uint32 src_id, uint32 flags, uint16 u[8]
-TAP_MAGIC = 0x494D4245
-TAP_HEADER_FMT = "<II"
-TAP_HEADER_SIZE = struct.calcsize(TAP_HEADER_FMT)
-TAP_FRAME_FMT = "<IIII8H"
-TAP_FRAME_SIZE = struct.calcsize(TAP_FRAME_FMT)
+# SymbolStream v2 binary format (.dvcf files)
+# See ~/symbolstream/SPEC.md §3 for full specification.
+#
+# Each message: 8-byte header + payload
+#   Header: magic[2] ('SY' = 0x5359), version (0x02), msg_type, payload_len (uint32 LE)
+#   msg_type 0x01 = CODEC_FRAME, 0x02 = CALL_START, 0x03 = CALL_END, 0x04 = HEARTBEAT
+#
+# CODEC_FRAME payload: 24-byte sssp_codec_hdr_t + param_count × uint32 params
+#   codec_hdr: talkgroup(4), src_id(4), call_id(4), timestamp_us(8),
+#              codec_type(1), param_count(1), errs(1), flags(1)
+#   For IMBE (codec_type=0): param_count=8, params = u[0..7]
+
+SSSP_MAGIC = b'SY'
+SSSP_VERSION = 0x02
+SSSP_HEADER_SIZE = 8
+SSSP_HEADER_FMT = "<2sBBI"  # magic(2), version(1), msg_type(1), payload_len(4)
+SSSP_MSG_CODEC_FRAME = 0x01
+SSSP_MSG_CALL_START = 0x02
+SSSP_MSG_CALL_END = 0x03
+SSSP_CODEC_HDR_SIZE = 24
+SSSP_CODEC_HDR_FMT = "<IIIQBBBx"  # talkgroup, src_id, call_id, timestamp_us, codec_type, param_count, errs, flags(pad)
+# Note: the struct is packed with errs(1)+flags(1) = 2 bytes at offsets 22-23.
+# Using explicit unpack below for clarity.
 
 
 def _read_dvcf_file(path, strip_silence=True):
-    """Read a binary TAP file and return (frame_vectors, tgid).
+    """Read a SymbolStream v2 binary .dvcf file and return (frame_vectors, tgid).
+
+    Parses the SSSP v2 message stream, extracts CODEC_FRAME messages, and
+    returns the IMBE codeword parameters as a numpy array suitable for
+    decode_frame_vectors().
 
     Args:
-        path: Path to .dvcf file
+        path: Path to .dvcf file (SymbolStream v2 binary format)
         strip_silence: If True, decode through libimbe and remove
             zero-energy frames (P25 signaling/preamble/silence).
 
     Returns:
-        fv: (N, 8) int16 array of IMBE codewords
-        tgid: talkgroup ID from first frame
+        fv: (N, 8) int16 array of IMBE codewords u[0..7]
+        tgid: talkgroup ID from first CODEC_FRAME (0 if no frames)
     """
     with open(path, "rb") as f:
         data = f.read()
 
-    # Try binary format first
-    if len(data) >= TAP_HEADER_SIZE:
-        magic, version = struct.unpack(TAP_HEADER_FMT, data[:TAP_HEADER_SIZE])
-        if magic == TAP_MAGIC:
-            n_frames = (len(data) - TAP_HEADER_SIZE) // TAP_FRAME_SIZE
-            frames = []
-            tgid = 0
-            for i in range(n_frames):
-                off = TAP_HEADER_SIZE + i * TAP_FRAME_SIZE
-                fields = struct.unpack(TAP_FRAME_FMT,
-                                       data[off:off + TAP_FRAME_SIZE])
-                seq, ftgid, src_id, flags = fields[:4]
-                u = list(fields[4:])
-                if i == 0:
-                    tgid = ftgid
-                frames.append(u)
-            fv = np.array(frames, dtype=np.int16)
-            if strip_silence:
-                fv = _strip_silence_frames(fv)
-            return fv, tgid
+    frames = []
+    tgid = 0
+    pos = 0
+    dlen = len(data)
 
-    # Fallback: JSON format (old TAP files)
-    import json
-    with open(path) as f:
-        meta = json.load(f)
-    frames = meta.get("frames", [])
-    fv = np.array([[fr["u"][j] for j in range(8)] for fr in frames],
-                   dtype=np.int16)
+    while pos + SSSP_HEADER_SIZE <= dlen:
+        # Parse 8-byte message header
+        magic = data[pos:pos + 2]
+        if magic != SSSP_MAGIC:
+            # Try to resync: scan forward for 'SY' + version byte
+            found = False
+            for scan in range(pos + 1, dlen - 2):
+                if data[scan:scan + 2] == SSSP_MAGIC and data[scan + 2] == SSSP_VERSION:
+                    pos = scan
+                    found = True
+                    break
+            if not found:
+                break
+            continue
+
+        version = data[pos + 2]
+        msg_type = data[pos + 3]
+        payload_len = struct.unpack_from("<I", data, pos + 4)[0]
+        pos += SSSP_HEADER_SIZE
+
+        # Bounds check for payload
+        if pos + payload_len > dlen:
+            break  # truncated message
+
+        if msg_type == SSSP_MSG_CODEC_FRAME:
+            if payload_len >= SSSP_CODEC_HDR_SIZE:
+                # Parse 24-byte codec header
+                tg = struct.unpack_from("<I", data, pos)[0]
+                src_id = struct.unpack_from("<I", data, pos + 4)[0]
+                call_id = struct.unpack_from("<I", data, pos + 8)[0]
+                timestamp_us = struct.unpack_from("<Q", data, pos + 12)[0]
+                codec_type = data[pos + 20]
+                param_count = data[pos + 21]
+                errs = data[pos + 22]
+                flags = data[pos + 23]
+
+                if len(frames) == 0:
+                    tgid = tg
+
+                # Extract param_count × uint32 parameters
+                params_offset = pos + SSSP_CODEC_HDR_SIZE
+                expected_bytes = param_count * 4
+                if params_offset + expected_bytes <= pos + payload_len:
+                    params = list(struct.unpack_from(
+                        "<%dI" % param_count, data, params_offset
+                    ))
+                    frames.append(params)
+
+        # Skip to next message regardless of type
+        pos += payload_len
+
+    if not frames:
+        fv = np.zeros((0, 8), dtype=np.int16)
+        return fv, tgid
+
+    # Pad frames to consistent width (should be 8 for IMBE)
+    max_params = max(len(f) for f in frames)
+    for i, f in enumerate(frames):
+        if len(f) < max_params:
+            frames[i] = f + [0] * (max_params - len(f))
+
+    fv = np.array(frames, dtype=np.int16)
+
     if strip_silence:
         fv = _strip_silence_frames(fv)
-    return fv, meta.get("tgid", 0)
+
+    return fv, tgid
 
 
 def _strip_silence_frames(fv):
