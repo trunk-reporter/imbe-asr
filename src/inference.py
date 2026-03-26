@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Single-file and pseudo-streaming inference.
 
+Hardened 2026-03-25: _read_dvcf_file() now filters on codec_type==0 (IMBE only),
+  rejects high-error-count frames (analog noise decoded as P25), validates IMBE
+  parameters for degenerate patterns, and has configurable max_errors threshold.
+
 Supports:
   - Single NPZ file transcription
   - Pseudo-streaming demo (progressive prefix decoding)
@@ -26,6 +30,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import struct
 import sys
@@ -33,6 +38,8 @@ import time
 
 import numpy as np
 import torch
+
+logger = logging.getLogger("imbe_asr.inference")
 
 from .model import ConformerCTC
 from .tokenizer import VOCAB_SIZE, decode_greedy
@@ -96,7 +103,7 @@ SSSP_CODEC_HDR_FMT = "<IIIQBBBx"  # talkgroup, src_id, call_id, timestamp_us, co
 # Using explicit unpack below for clarity.
 
 
-def _read_dvcf_file(path, strip_silence=True):
+def _read_dvcf_file(path, strip_silence=True, max_errors=10):
     """Read a SymbolStream v2 binary .dvcf file and return (frame_vectors, tgid).
 
     Parses the SSSP v2 message stream, extracts CODEC_FRAME messages, and
@@ -107,6 +114,9 @@ def _read_dvcf_file(path, strip_silence=True):
         path: Path to .dvcf file (SymbolStream v2 binary format)
         strip_silence: If True, decode through libimbe and remove
             zero-energy frames (P25 signaling/preamble/silence).
+        max_errors: Drop frames with error count above this threshold
+            (analog noise decoded as P25 produces very high error counts).
+            Set to -1 to disable filtering.
 
     Returns:
         fv: (N, 8) int16 array of IMBE codewords u[0..7]
@@ -159,6 +169,19 @@ def _read_dvcf_file(path, strip_silence=True):
                 if len(frames) == 0:
                     tgid = tg
 
+                # Filter: only accept IMBE/P25-P1 (codec_type == 0)
+                if codec_type != 0:
+                    logger.debug("Skipping non-IMBE frame: codec_type=%d", codec_type)
+                    pos += payload_len
+                    continue
+
+                # Filter: reject high-error-count frames (analog garbage)
+                if max_errors >= 0 and errs > max_errors:
+                    logger.debug("Dropping frame: errs=%d > max_errors=%d (tg=%d)",
+                                 errs, max_errors, tg)
+                    pos += payload_len
+                    continue
+
                 # Extract param_count × uint32 parameters
                 params_offset = pos + SSSP_CODEC_HDR_SIZE
                 expected_bytes = param_count * 4
@@ -166,6 +189,18 @@ def _read_dvcf_file(path, strip_silence=True):
                     params = list(struct.unpack_from(
                         "<%dI" % param_count, data, params_offset
                     ))
+
+                    # Validate IMBE parameters: reject degenerate frames
+                    if all(p == 0 for p in params):
+                        logger.debug("Dropping all-zero IMBE frame (tg=%d)", tg)
+                        pos += payload_len
+                        continue
+                    if len(set(params)) == 1:
+                        logger.debug("Dropping degenerate IMBE frame: all params=%d (tg=%d)",
+                                     params[0], tg)
+                        pos += payload_len
+                        continue
+
                     frames.append(params)
 
         # Skip to next message regardless of type
