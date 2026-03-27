@@ -69,12 +69,8 @@ class OnnxModel:
         if len(input_names) > 1:
             feeds[input_names[1]] = lengths_np
         outputs = self.session.run(None, feeds)
-        # outputs[0] = logits or log_probs, outputs[1] = output_lengths (if present)
-        logits = outputs[0]
-        # Apply log_softmax if the output looks like raw logits
-        # (check if values sum to ~1 along last dim after exp)
-        from scipy.special import log_softmax as sp_log_softmax
-        log_probs = sp_log_softmax(logits, axis=-1)
+        # outputs[0] = log_probs (model already applies F.log_softmax internally)
+        log_probs = outputs[0]
         out_lengths = outputs[1] if len(outputs) > 1 else np.array([log_probs.shape[1]])
         return log_probs, out_lengths
 
