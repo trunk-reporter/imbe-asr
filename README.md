@@ -1,16 +1,34 @@
 # IMBE-ASR: Speech Recognition Directly from Vocoder Parameters
 
-ASR straight from P25 IMBE codec parameters -- skip audio reconstruction entirely and go from the digital bitstream to text. 290M Conformer-CTC, **1.9% WER** with language model on LibriSpeech-IMBE.
+ASR straight from P25 IMBE codec parameters — skip audio reconstruction entirely and go from the digital bitstream to text. 290M Conformer-CTC, **3.35% WER** with included language model on LibriSpeech-IMBE.
 
 **Models:** [trunk-reporter/imbe-asr collection](https://huggingface.co/collections/trunk-reporter/imbe-asr-speech-recognition-from-vocoder-parameters-69c0a4f68ef670b5bf68449d) on Hugging Face
 
-| Model | Params | Greedy WER | Beam WER | HF Repo |
-|-------|--------|-----------|----------|---------|
-| Large | 290M | 6.5% | **1.9%** | [imbe-asr-large-1024d](https://huggingface.co/trunk-reporter/imbe-asr-large-1024d) |
-| Base | 48.6M | 18.9% | -- | [imbe-asr-base-512d](https://huggingface.co/trunk-reporter/imbe-asr-base-512d) |
-| Base P25 | 48.6M | 19.2% | -- | [imbe-asr-base-512d-p25](https://huggingface.co/trunk-reporter/imbe-asr-base-512d-p25) |
+| Model | Params | Greedy WER | Beam+LM WER | Use case | HF Repo |
+|-------|--------|-----------|-------------|----------|---------|
+| Large | 290M | 6.5% | **3.35%** (5-gram) | Best accuracy | [imbe-asr-large-1024d](https://huggingface.co/trunk-reporter/imbe-asr-large-1024d) |
+| Base | 48.6M | 10.6% | **4.84%** (3-gram) | Edge / Pi 5 | [imbe-asr-base-512d](https://huggingface.co/trunk-reporter/imbe-asr-base-512d) |
+| Base P25 | 48.6M | 37.1% → **19.2%** beam | 19.2% | Live P25 radio | [imbe-asr-base-512d-p25](https://huggingface.co/trunk-reporter/imbe-asr-base-512d-p25) |
 
-All models available in SafeTensors + ONNX (fp32, int8, uint8) formats.
+All models ship with a tuned KenLM language model. ONNX (fp32, int8, uint8) + SafeTensors formats.
+
+## Quick Start
+
+```bash
+pip install onnxruntime numpy huggingface_hub pyctcdecode kenlm
+
+# Live P25 radio (recommended for real radio traffic)
+python3 scripts/transcribe_p25.py path/to/call.dvcf
+python3 scripts/transcribe_p25.py --watch /path/to/dvcf/dir
+
+# Best accuracy (LibriSpeech-IMBE, clean speech)
+python3 scripts/transcribe_large.py path/to/call.dvcf
+
+# Edge deployment (Raspberry Pi 5)
+python3 scripts/transcribe_base.py path/to/call.dvcf
+```
+
+Models download automatically from Hugging Face on first run.
 
 ## The Problem
 
@@ -50,12 +68,18 @@ The mask is critical -- without it the model can't distinguish silence from zero
 
 **LibriSpeech-IMBE validation** (speaker-split, 2775 utterances):
 
-| Decoding | WER | CER |
-|----------|-----|-----|
-| Greedy | 6.5% | 1.9% |
-| + 5-gram KenLM | **1.9%** | **0.7%** |
+| Model | Greedy WER | Beam+LM WER | LM | Params |
+|-------|-----------|-------------|----|--------|
+| Large (290M) | 6.5% | **3.35%** | 5-gram trie+q8 (α=0.7, β=2.0) | 290M |
+| Base (48.6M) | 10.6% | **4.84%** | 3-gram trie+q8 (α=0.7, β=2.0) | 48.6M |
 
-For context: this is from 4.4 kbps vocoder parameters, not audio. The IMBE codec was designed in 1993 to be barely intelligible to human ears.
+**Real P25 radio** (50 labeled samples, law enforcement/fire/EMS):
+
+| Model | Greedy WER | Beam+LM WER | LM | Notes |
+|-------|-----------|-------------|-----|-------|
+| Base P25 (48.6M) | 37.1% | **19.2%** | 3-gram trie+q8 (α=0.5, β=1.0) | P25 fine-tuned |
+
+For context: this is from 4.4 kbps vocoder parameters, not audio. The IMBE codec was designed in 1993 to be barely intelligible to human ears. Language models are included in each HF repo and tuned per model.
 
 Full eval logs with REF/HYP examples are in [`results/`](results/).
 
