@@ -302,6 +302,10 @@ The approach is codec-agnostic. IMBE and AMBE/AMBE+2 are the same family (both D
 
 DMR alone covers most commercial/industrial two-way radio worldwide. D-STAR is amateur radio. NXDN is Kenwood/Icom. If the principle holds -- that speech codecs are already doing feature extraction and we just need to learn to read their output -- this generalizes well beyond P25.
 
+## Roadmap
+
+See the [Trunk Reporter Roadmap](https://github.com/orgs/trunk-reporter/projects/1) for the cross-repo project tracker with priorities and phases.
+
 ## What's Next
 
 - P25 fine-tuning the 290M model (in progress)
