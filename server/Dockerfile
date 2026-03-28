@@ -19,8 +19,11 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 COPY src/ /app/src/
 COPY server/ /app/server/
-COPY vocoder/libimbe.so /app/vocoder/libimbe.so
-COPY vocoder/libimbe.so /app/libimbe.so
+
+# libimbe.so is NOT included in the public image (reverse-engineered proprietary codec).
+# Required only for raw codeword input (.tap / live symbolstream).
+# Not needed for .dvcf transcription via tr-plugin-dvcf (the primary use case).
+# Mount at runtime if needed: -v /path/to/libimbe.so:/app/libimbe.so
 
 # Models and LM are mounted at runtime via volumes or env vars.
 # See docs.luxprimatech.com/#/imbe-asr-setup for deployment guide.
