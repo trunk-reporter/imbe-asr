@@ -1,9 +1,9 @@
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
-# Install Python 3.11
+# Install Python 3.11 + build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 python3.11-venv python3-pip python3.11-dev \
-    build-essential cmake \
+    build-essential cmake git \
     libboost-program-options-dev libboost-system-dev libboost-thread-dev \
     libsndfile1 && \
     ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
@@ -19,11 +19,16 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 COPY src/ /app/src/
 COPY server/ /app/server/
+COPY vocoder/ /app/vocoder/
 
-# libimbe.so is NOT included in the public image (reverse-engineered proprietary codec).
-# Required only for raw codeword input (.tap / live symbolstream).
-# Not needed for .dvcf transcription via tr-plugin-dvcf (the primary use case).
-# Mount at runtime if needed: -v /path/to/libimbe.so:/app/libimbe.so
+# Build libimbe.so from trunk-recorder's open-source op25 vocoder implementation.
+# This is the same reverse-engineered IMBE codec used by trunk-recorder itself.
+RUN git clone --depth 1 --filter=blob:none --sparse \
+        https://github.com/TrunkRecorder/trunk-recorder.git /tmp/tr && \
+    cd /tmp/tr && git sparse-checkout set lib/op25_repeater/lib/imbe_vocoder && \
+    cd /app/vocoder && make VOCODER_DIR=/tmp/tr/lib/op25_repeater/lib/imbe_vocoder && \
+    cp /app/vocoder/libimbe.so /app/libimbe.so && \
+    rm -rf /tmp/tr
 
 # Models and LM are mounted at runtime via volumes or env vars.
 # See docs.luxprimatech.com/#/imbe-asr-setup for deployment guide.
