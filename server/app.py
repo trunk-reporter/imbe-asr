@@ -31,6 +31,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.inference import load_model, load_stats, transcribe, _read_dvcf_file, OnnxModel
+from src.tokenizer import decode_greedy
 from src.precompute import decode_frame_vectors
 
 logger = logging.getLogger("imbe_asr")
@@ -42,6 +43,7 @@ _model = None
 _device = None
 _mean = None
 _std = None
+_beam_decoder = None
 _ckpt_info = {}
 _min_frames = 10
 
@@ -49,7 +51,7 @@ _min_frames = 10
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load model on startup."""
-    global _model, _device, _mean, _std, _ckpt_info, _min_frames
+    global _model, _device, _mean, _std, _ckpt_info, _min_frames, _beam_decoder
 
     checkpoint_path = os.environ.get("IMBE_ASR_CHECKPOINT")
     if not checkpoint_path:
@@ -65,6 +67,27 @@ async def lifespan(app: FastAPI):
     device = torch.device(device_str) if device_str else None
 
     _min_frames = int(os.environ.get("IMBE_ASR_MIN_FRAMES", "10"))
+
+    # Optional beam search + KenLM
+    lm_path = os.environ.get("IMBE_ASR_LM_PATH")
+    unigrams_path = os.environ.get("IMBE_ASR_UNIGRAMS_PATH")
+    if lm_path:
+        from src.decode import BeamDecoder
+        alpha = float(os.environ.get("IMBE_ASR_LM_ALPHA", "0.5"))
+        beta = float(os.environ.get("IMBE_ASR_LM_BETA", "1.0"))
+        beam_width = int(os.environ.get("IMBE_ASR_BEAM_WIDTH", "100"))
+        _beam_decoder = BeamDecoder(
+            lm_path=lm_path,
+            unigrams_path=unigrams_path,
+            alpha=alpha,
+            beta=beta,
+            beam_width=beam_width,
+        )
+        logger.info("Beam decoder loaded: LM=%s alpha=%.2f beta=%.2f beam=%d",
+                    lm_path, alpha, beta, beam_width)
+    else:
+        _beam_decoder = None
+        logger.info("No LM configured — using greedy decode")
 
     logger.info("Loading model from %s", checkpoint_path)
     _model, _device, ckpt = load_model(checkpoint_path, device)
@@ -160,7 +183,12 @@ async def transcribe_audio(file: UploadFile = File(...)):
         duration = feats.shape[0] * 0.020  # 20ms per frame
 
         # Run CTC inference
-        text = transcribe(_model, feats, _device)
+        if _beam_decoder is not None:
+            log_probs, lengths = _model(feats[None].astype(np.float32), np.array([len(feats)]))
+            lp = log_probs[0, :lengths[0]]
+            text = _beam_decoder.decode(lp)
+        else:
+            text = transcribe(_model, feats, _device)
 
         elapsed = time.time() - t0
         logger.info(
