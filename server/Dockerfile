@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 COPY src/ /app/src/
 COPY server/ /app/server/
+COPY server/entrypoint.sh /app/entrypoint.sh
 COPY vocoder/ /app/vocoder/
 
 # Build libimbe.so from trunk-recorder's open-source op25 vocoder implementation.
@@ -32,10 +33,13 @@ RUN git clone --depth 1 --filter=blob:none --sparse \
 
 # Models and LM are mounted at runtime via volumes or env vars.
 # See docs.luxprimatech.com/#/imbe-asr-setup for deployment guide.
-ENV IMBE_ASR_CHECKPOINT=/models/model_int8.onnx
-ENV IMBE_ASR_STATS=/models/stats.npz
 ENV IMBE_ASR_DEVICE=cuda
+ENV IMBE_ASR_MODEL=trunk-reporter/imbe-asr-base-512d-p25
+ENV MODELS_DIR=/models
+
+RUN pip install --no-cache-dir huggingface_hub && \
+    chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
-CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/entrypoint.sh"]
