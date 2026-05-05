@@ -1,6 +1,9 @@
-torch>=2.0
-numpy
-pyyaml
-soundfile
-wandb
-awscli
+torch>=2.0,<3
+numpy>=1.24,<3
+pyyaml>=6,<7
+soundfile>=0.12,<1
+
+# Additional deps installed via Dockerfile (not in requirements):
+#   pyctcdecode, kenlm           — beam search (both Dockerfiles)
+#   onnxruntime-gpu              — GPU inference (server/Dockerfile only)
+#   huggingface_hub              — model download (both Dockerfiles)
